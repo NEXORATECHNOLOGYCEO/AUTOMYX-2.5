@@ -24,6 +24,24 @@ Automyx actúa como un equipo completo de profesionales:
 4. **Data Science Quantitativo:** Simulador de Jupyter en memoria para análisis predictivo y ejecución de consultas SQL en tiempo real.
 5. **Control Absoluto del PC:** Abre aplicaciones (VS Code, Chrome, TikTok, Vyrex Studio), controla el mouse, escribe en el teclado y navega por la web de forma indetectable.
 
+---
+
+## 💻 Interfaz Gráfica: Elegancia y Profesionalismo Extremo
+
+Automyx no solo es potente en su backend, sino que cuenta con un **Dashboard de Control de grado corporativo** diseñado con un estilo *Cyberpunk / High-Tech Glassmorphism*.
+
+<div align="center">
+  <img src="frontend/assets/screenshots/captura1.png" alt="Interfaz de Automyx" width="800" style="border-radius: 15px; box-shadow: 0 10px 30px rgba(0,240,255,0.2);"/>
+</div>
+
+### Características de la UI:
+- **Limpia y Seria:** Olvídate de los chats convencionales. La interfaz está diseñada para desarrolladores y profesionales, sin distracciones y con tipografía técnica (`Rajdhani` y `Inter`).
+- **Transparencia y Neón (Glassmorphism):** Paneles translúcidos que reflejan un fondo animado oscuro con sutiles destellos cyan y carmesí.
+- **HUD de Ejecución en Vivo:** Mientras la IA procesa y ejecuta tareas en tu PC, despliega un **Terminal Holográfico 3D** en medio del chat. En lugar de bloques de código aburridos, verás una línea de tiempo estructurada que te explica paso a paso lo que el modelo está razonando y ejecutando, acompañado de LEDs parpadeantes de estado.
+- **Libre de Ruido Visual:** El sistema intercepta automáticamente los JSONs técnicos que la IA utiliza para comunicarse con el sistema operativo, traduciéndolos en notificaciones de "Acción de Sistema" elegantes y ordenadas.
+
+---
+
 ## 🏢 Sobre Nexora Technology LLC
 Este proyecto es impulsado por la visión de **Nexora Technology LLC**, bajo el liderazgo y desarrollo de **Juan Kappler**. Nuestro objetivo es democratizar la Inteligencia Artificial de grado militar/corporativo, permitiendo que cualquier individuo con hardware limitado pueda tener un agente omnipotente a su servicio.
 
