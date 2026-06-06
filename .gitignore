@@ -1,0 +1,59 @@
+# Entornos virtuales
+venv/
+env/
+.env
+
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Archivos generados
+*.log
+tasks.json
+credentials.json
+config.json
+agents.json
+preview.html
+screenshot.png
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node y WhatsApp API
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.wwebjs_auth/
+.wwebjs_cache/
+
+# OS y editores
+.DS_Store
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Archivos confidenciales
+*.pem
+*.key
+*.cert
+*.crt

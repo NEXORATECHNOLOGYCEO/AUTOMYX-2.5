@@ -1,0 +1,2619 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Automyx - Gateway Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6', // Blue-500
+                        primaryHover: '#2563eb', // Blue-600
+                        accent: '#f97316', // Orange-500
+                        bgDark: '#121214',
+                        panelDark: '#1c1c1f',
+                        borderDark: '#2d2d30',
+                        textMuted: '#9ca3af'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: var(--bg-color, #121214); color: var(--text-color, #f3f4f6); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; transition: background-color 0.3s, color 0.3s; }
+        
+        .bg-bgDark { background-color: var(--bg-color, #121214) !important; transition: background-color 0.3s; }
+        .bg-panelDark { background-color: var(--panel-color, #1c1c1f) !important; transition: background-color 0.3s; }
+        .border-borderDark { border-color: var(--border-color, #2d2d30) !important; transition: border-color 0.3s; }
+        .text-textMuted { color: var(--muted-color, #9ca3af) !important; }
+        .text-gray-300 { color: var(--text-color, #d1d5db) !important; }
+        .text-gray-200 { color: var(--text-bold, #e5e7eb) !important; }
+
+        .sidebar-item { display: flex; align-items: center; padding: 0.5rem 1rem; border-radius: 0.5rem; margin-bottom: 0.25rem; color: var(--muted-color, #9ca3af); transition: all 0.2s; cursor: pointer; }
+        .sidebar-item:hover { background-color: var(--hover-bg, rgba(59, 130, 246, 0.1)); color: var(--text-color, #f3f4f6); }
+        .sidebar-item.active { background-color: var(--active-bg, rgba(59, 130, 246, 0.15)); color: var(--primary-color, #3b82f6); border: 1px solid var(--active-border, rgba(59, 130, 246, 0.3)); }
+        .sidebar-category { font-size: 0.75rem; text-transform: uppercase; color: var(--muted-color, #6b7280); font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.5rem; padding-left: 1rem; letter-spacing: 0.05em; display: flex; justify-content: space-between; align-items: center; }
+        
+        .chat-area { height: calc(100vh - 180px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border-color, #4b5563) var(--panel-color, #1c1c1f); }
+        .chat-area::-webkit-scrollbar { width: 6px; }
+        .chat-area::-webkit-scrollbar-thumb { background-color: var(--border-color, #4b5563); border-radius: 3px; }
+        
+        .message-block { display: flex; gap: 1rem; margin-bottom: 1.5rem; }
+        .avatar { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; }
+        .avatar-tool { background-color: var(--border-color, #2d2d30); color: var(--muted-color, #9ca3af); }
+        .avatar-ai { background-color: var(--active-bg, rgba(59, 130, 246, 0.2)); color: var(--primary-color, #3b82f6); border: 1px solid var(--active-border, rgba(59, 130, 246, 0.4)); }
+        .avatar-user { background-color: rgba(249, 115, 22, 0.2); color: #f97316; border: 1px solid rgba(249, 115, 22, 0.4); }
+        
+        .msg-content { flex-grow: 1; }
+        .msg-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem; }
+        .msg-name { font-weight: 600; font-size: 0.9rem; color: var(--text-bold, #e5e7eb); }
+        .msg-time { font-size: 0.75rem; color: var(--muted-color, #6b7280); }
+        /* Bubble & 3D Styling for AI Action Indicator */
+        .bubble-container {
+            perspective: 1000px;
+            margin-bottom: 1rem;
+        }
+        .bubble-3d {
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.95));
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 1.5rem;
+            padding: 1.25rem;
+            box-shadow: 
+                0 10px 30px -10px rgba(0, 0, 0, 0.5),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1),
+                0 0 20px rgba(59, 130, 246, 0.15);
+            transform-style: preserve-3d;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .bubble-3d::before {
+            content: '';
+            position: absolute;
+            top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background: radial-gradient(circle, rgba(59,130,246,0.1) 0%, transparent 60%);
+            animation: rotate-glow 10s linear infinite;
+            pointer-events: none;
+        }
+        @keyframes rotate-glow {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .timeline-container {
+            position: relative;
+            padding-left: 1.5rem;
+            margin-top: 1rem;
+        }
+        .timeline-container::before {
+            content: '';
+            position: absolute;
+            left: 0.35rem; top: 0; bottom: 0;
+            width: 2px;
+            background: linear-gradient(to bottom, rgba(59,130,246,0.5), transparent);
+        }
+        .timeline-item {
+            position: relative;
+            margin-bottom: 0.75rem;
+            font-size: 0.85rem;
+            color: var(--text-color, #d1d5db);
+        }
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -1.45rem; top: 0.3rem;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--primary-color, #3b82f6);
+            box-shadow: 0 0 8px var(--primary-color, #3b82f6);
+        }
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(10px) scale(0.95); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .animate-fade-in-up {
+            animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        
+        .msg-bubble { background-color: var(--panel-color, #1c1c1f); border: 1px solid var(--border-color, #2d2d30); border-radius: 0.5rem; padding: 1rem; font-size: 0.95rem; line-height: 1.5; color: var(--text-color, #d1d5db); transition: all 0.3s; word-wrap: break-word; }
+        
+        /* Ocultar JSONs crudos si no están procesados */
+        .raw-json-block {
+            display: none;
+        }
+        
+        .tool-box { background-color: var(--bg-color, #121214); border: 1px solid var(--border-color, #2d2d30); border-radius: 0.5rem; padding: 0.75rem; margin-top: 0.5rem; font-family: monospace; font-size: 0.85rem; color: var(--text-color, #d1d5db); transition: all 0.3s; }
+        .tool-header { display: flex; justify-content: space-between; margin-bottom: 0.5rem; color: var(--muted-color, #9ca3af); font-size: 0.8rem; }
+        
+        .top-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 8px; border: 1px solid var(--border-color, #2d2d30); color: var(--muted-color, #9ca3af); background-color: transparent; transition: all 0.2s; cursor: pointer; }
+        .top-btn:hover { background-color: var(--border-color, #2d2d30); color: var(--text-color, #f3f4f6); }
+        .top-btn.active { border-color: var(--primary-color, #3b82f6); color: var(--primary-color, #3b82f6); }
+        
+        .input-area { background-color: var(--panel-color, #1c1c1f); border-radius: 0.75rem; display: flex; align-items: center; padding: 0.5rem; transition: border-color 0.2s, background-color 0.3s; border: 2px solid var(--border-color, #2d2d30); }
+        .input-area:focus-within { border-color: #ff5555; }
+        textarea { background: transparent; border: none; outline: none; color: var(--text-color, #f3f4f6); width: 100%; resize: none; padding: 0.5rem; font-family: inherit; }
+        
+        .status-badge { display: flex; align-items: center; gap: 0.35rem; padding: 0.25rem 0.75rem; border-radius: 999px; font-size: 0.75rem; font-weight: 500; border: 1px solid var(--border-color, #2d2d30); background-color: var(--panel-color, #1c1c1f); transition: all 0.3s; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; }
+        
+        .view-section { display: none !important; }
+        .view-section.active { display: flex !important; flex-direction: column; }
+        
+        /* Mobile Sidebar Overlay */
+        #mobile-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 40;
+        }
+        #mobile-overlay.active {
+            display: block;
+        }
+        
+        @media (max-width: 768px) {
+            #sidebar {
+                position: fixed;
+                left: -100%;
+                z-index: 50;
+                height: 100%;
+                transition: left 0.3s ease;
+            }
+            #sidebar.open {
+                left: 0;
+            }
+            .chat-controls-container {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .chat-controls-buttons {
+                justify-content: space-between;
+                width: 100%;
+                margin-top: 10px;
+            }
+            .chat-header-actions {
+                flex-wrap: wrap;
+                overflow: visible !important; /* Allow dropdowns to show */
+            }
+            /* Make dropdowns take full width on mobile for better visibility */
+            .mobile-dropdown {
+                position: fixed !important;
+                top: 50% !important;
+                left: 50% !important;
+                transform: translate(-50%, -50%) !important;
+                width: 90% !important;
+                max-width: 400px !important;
+                max-height: 80vh !important;
+                z-index: 100 !important;
+                box-shadow: 0 0 0 100vmax rgba(0,0,0,0.8) !important; /* Pseudo-backdrop */
+            }
+        }
+
+        /* Call Mode Animations */
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 15px rgba(34, 197, 94, 0); }
+            100% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+        .call-active-ring {
+            animation: pulse-ring 2s infinite;
+        }
+        
+        #call-overlay {
+            display: none;
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.85);
+            z-index: 50;
+            backdrop-filter: blur(4px);
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        #call-overlay.active {
+            display: flex;
+        }
+        .voice-waves {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            height: 60px;
+        }
+        .wave-bar {
+            width: 8px;
+            height: 10px;
+            background-color: #22c55e;
+            border-radius: 4px;
+            animation: wave-animation 1s infinite ease-in-out alternate;
+        }
+        .wave-bar:nth-child(2) { animation-delay: 0.1s; }
+        .wave-bar:nth-child(3) { animation-delay: 0.2s; }
+        .wave-bar:nth-child(4) { animation-delay: 0.3s; }
+        .wave-bar:nth-child(5) { animation-delay: 0.4s; }
+        
+        @keyframes wave-animation {
+            0% { height: 10px; }
+            100% { height: 60px; }
+        }
+    </style>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+    <!-- SIDEBAR -->
+    <aside id="sidebar" class="w-64 border-r border-borderDark bg-bgDark flex flex-col flex-shrink-0 transition-colors duration-300">
+        <!-- Logo Area -->
+        <div class="h-16 flex items-center justify-between px-6 border-b border-borderDark">
+            <div class="flex items-center">
+                <img src="/assets/logo.png" alt="Automyx Logo" class="w-8 h-8 mr-3 rounded-lg shadow-[0_0_10px_rgba(59,130,246,0.3)] object-cover bg-black" onerror="console.error('Error cargando logo principal', this.src); this.src='https://ui-avatars.com/api/?name=A&background=0D8ABC&color=fff'">
+                <div>
+                    <h1 class="font-bold text-lg leading-tight tracking-wide">AUTOMYX <span class="text-[0.6rem] text-primary align-top"></span></h1>
+                    <p class="text-[0.65rem] text-textMuted uppercase tracking-wider">Gateway Dashboard</p>
+                </div>
+            </div>
+            <!-- Botón cerrar sidebar en móvil -->
+            <button class="md:hidden text-gray-400 hover:text-white" onclick="toggleSidebar()">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+        
+        <!-- Navigation -->
+        <div class="flex-1 overflow-y-auto px-3 py-4 scrollbar-hide">
+            
+            <div class="sidebar-category">Chat <i class="fas fa-minus text-[0.6rem]"></i></div>
+            <div class="sidebar-item active" onclick="switchView('chat')">
+                <i class="far fa-comment-alt w-6 text-center"></i>
+                <span class="text-sm font-medium">Chat</span>
+            </div>
+
+            <div class="sidebar-category">Control <i class="fas fa-minus text-[0.6rem]"></i></div>
+            <div class="sidebar-item" onclick="switchView('resumen')">
+                <i class="fas fa-chart-bar w-6 text-center"></i>
+                <span class="text-sm">Resumen</span>
+            </div>
+            <div class="sidebar-item" onclick="switchView('canales')">
+                <i class="fas fa-link w-6 text-center"></i>
+                <span class="text-sm">Canales</span>
+            </div>
+            <div class="sidebar-item" onclick="switchView('instancias')">
+                <i class="fas fa-satellite-dish w-6 text-center"></i>
+                <span class="text-sm">Instancias</span>
+            </div>
+            <div class="sidebar-item" onclick="switchView('sesiones')">
+                <i class="far fa-folder-open w-6 text-center"></i>
+                <span class="text-sm">Sesiones</span>
+            </div>
+            <div class="sidebar-item" onclick="switchView('uso')">
+                <i class="fas fa-chart-line w-6 text-center"></i>
+                <span class="text-sm">Uso</span>
+            </div>
+            <div class="sidebar-item" onclick="switchView('tareas')">
+                <i class="fas fa-sun w-6 text-center"></i>
+                <span class="text-sm">Tareas Cron</span>
+            </div>
+
+            <div class="sidebar-category">Agente <i class="fas fa-minus text-[0.6rem]"></i></div>
+            <div class="sidebar-item" onclick="switchView('agentes')">
+                <i class="far fa-folder w-6 text-center"></i>
+                <span class="text-sm">Agentes</span>
+            </div>
+            <div class="sidebar-item" onclick="switchView('habilidades')">
+                <i class="fas fa-bolt w-6 text-center text-yellow-500"></i>
+                <span class="text-sm">Habilidades</span>
+            </div>
+            <div class="sidebar-item" onclick="switchView('automatizacion')">
+                <i class="fas fa-clock w-6 text-center text-purple-400"></i>
+                <span class="text-sm">Automatización</span>
+            </div>
+            <div class="sidebar-item" onclick="switchView('terminal')">
+                <i class="fas fa-terminal w-6 text-center text-accent"></i>
+                <span class="text-sm">Web Terminal</span>
+            </div>
+            <div class="sidebar-item" onclick="switchView('preview')">
+                <i class="fas fa-globe w-6 text-center text-blue-400"></i>
+                <span class="text-sm">Web Preview</span>
+            </div>
+            <div class="sidebar-item" onclick="switchView('habilidades')">
+                <i class="fas fa-bolt w-6 text-center"></i>
+                <span class="text-sm">Habilidades</span>
+            </div>
+            <div class="sidebar-item" onclick="switchView('nodos')">
+                <i class="fas fa-desktop w-6 text-center"></i>
+                <span class="text-sm">Nodos</span>
+            </div>
+
+            <div class="sidebar-category">Ajustes <i class="fas fa-minus text-[0.6rem]"></i></div>
+            <div class="sidebar-item" onclick="switchView('configuracion')">
+                <i class="fas fa-cog w-6 text-center"></i>
+                <span class="text-sm">Configuración</span>
+            </div>
+            <div class="sidebar-item" onclick="switchView('acerca')">
+                <i class="fas fa-info-circle w-6 text-center text-blue-500"></i>
+                <span class="text-sm">Acerca de Automyx</span>
+            </div>
+            <div class="sidebar-item" onclick="switchView('depuracion')">
+                <i class="fas fa-bug w-6 text-center"></i>
+                <span class="text-sm">Depuración</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col bg-bgDark relative transition-colors duration-300">
+        
+        <!-- Top Header -->
+        <header class="h-16 border-b border-borderDark flex items-center justify-between px-4 gap-3 transition-colors duration-300 flex-shrink-0">
+            <!-- Botón de menú hamburguesa (solo móvil) -->
+            <button class="md:hidden text-gray-300 hover:text-white" onclick="toggleSidebar()">
+                <i class="fas fa-bars text-xl"></i>
+            </button>
+            
+            <!-- Controles izquierda: Token Gateway -->
+            <div class="flex items-center gap-3">
+                <div class="bg-panelDark border border-borderDark rounded-lg px-4 py-2 flex items-center gap-2 relative group">
+                    <i class="fas fa-key text-primary"></i>
+                    <input type="password" id="gateway-token" placeholder="Token de Gateway" 
+                           class="bg-transparent border-none outline-none text-sm text-gray-300 w-48 sm:w-64" 
+                           onchange="saveGatewayToken()" onkeyup="if(event.key==='Enter') saveGatewayToken()">
+                    <button onclick="toggleTokenVisibility()" class="text-xs text-gray-400 hover:text-white" title="Mostrar/Ocultar"><i class="fas fa-eye"></i></button>
+                    <button onclick="saveGatewayToken()" class="bg-primary hover:bg-primaryHover text-white text-xs px-2 py-1 rounded transition" title="Guardar Token">
+                        <i class="fas fa-save"></i>
+                    </button>
+                    <!-- Tooltip de explicación -->
+                    <div class="absolute bottom-full left-0 mb-2 w-72 bg-panelDark border border-borderDark rounded-lg p-3 shadow-xl hidden group-hover:block z-50">
+                        <h4 class="text-sm font-bold text-white mb-1"><i class="fas fa-info-circle text-primary mr-1"></i>¿Qué es el Gateway?</h4>
+                        <p class="text-xs text-gray-400">El Gateway es el núcleo de Automyx. Conecta el chat, las habilidades y el sistema operativo. El token es tu clave de seguridad para acceder a él.</p>
+                    </div>
+                </div>
+                <!-- Feedback de guardado -->
+                <div id="token-save-feedback" class="text-xs text-green-400 hidden"><i class="fas fa-check-circle mr-1"></i>Guardado!</div>
+            </div>
+
+            <!-- Controles derecha -->
+            <div class="flex items-center gap-3 ml-auto">
+                <div class="hidden sm:flex status-badge">
+                    <div class="dot bg-accent"></div>
+                    <span class="text-gray-300">Versión 2.5</span>
+                </div>
+                <div class="status-badge">
+                    <div class="dot bg-green-500"></div>
+                    <span class="text-gray-300 hidden sm:inline">Estado <span class="text-green-500">Correcto</span></span>
+                    <span class="text-green-500 sm:hidden">OK</span>
+                </div>
+                
+                <div class="flex gap-1 sm:gap-2 ml-2">
+                    <button class="top-btn" onclick="setTheme('blue')" id="btn-theme-blue" title="Tema Azul"><i class="fas fa-desktop"></i></button>
+                    <button class="top-btn" onclick="setTheme('light')" id="btn-theme-light" title="Tema Claro"><i class="far fa-sun"></i></button>
+                    <button class="top-btn active" onclick="setTheme('dark')" id="btn-theme-dark" title="Tema Oscuro"><i class="far fa-moon"></i></button>
+                </div>
+            </div>
+        </header>
+
+        <!-- VIEW: CHAT -->
+        <div id="view-chat" class="view-section active flex-1 flex flex-col h-full relative">
+            
+            <!-- Call Mode Overlay -->
+            <div id="call-overlay">
+                <div class="text-green-500 mb-6 text-2xl font-bold tracking-widest uppercase" id="call-status-text">Escuchando...</div>
+                <div class="voice-waves mb-8">
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                </div>
+                <button onclick="toggleCallMode()" class="bg-red-600 hover:bg-red-500 text-white px-8 py-4 rounded-full font-bold text-lg transition shadow-[0_0_20px_rgba(220,38,38,0.6)] flex items-center gap-3">
+                    <i class="fas fa-phone-slash"></i> Finalizar Llamada
+                </button>
+            </div>
+
+            <div class="p-4 sm:p-6 max-w-6xl mx-auto w-full flex flex-col h-full">
+                <!-- Page Title Area -->
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-4 flex-shrink-0 gap-4 relative">
+                    <div>
+                        <h2 class="text-2xl sm:text-3xl font-bold mb-1">Chat <span class="hidden sm:inline-block text-xs font-normal text-primary ml-2 border border-primary px-2 py-1 rounded-full">Lee como un humano antes de escribir</span></h2>
+                        <p class="text-textMuted text-xs sm:text-sm">Sesión de chat directa con la puerta de enlace.</p>
+                    </div>
+                    
+                    <div class="flex items-center gap-2 sm:gap-3 chat-header-actions w-full sm:w-auto pb-1 sm:pb-0 z-40">
+                        <!-- Selector de Agente -->
+                        <div class="bg-panelDark border border-borderDark rounded-lg px-4 py-2 flex items-center cursor-pointer hover:border-gray-500 transition relative" onclick="toggleDropdown('agent-dropdown')">
+                            <i class="fas fa-robot text-primary mr-2"></i>
+                            <span class="text-sm mr-4" id="current-agent-display">Automyx Principal</span>
+                            <i class="fas fa-chevron-down text-xs text-gray-500"></i>
+                            
+                            <!-- Dropdown Menu Agentes -->
+                            <div id="agent-dropdown" class="hidden absolute sm:top-full top-auto mt-2 sm:right-0 right-auto bg-panelDark border border-borderDark rounded-lg shadow-xl w-64 z-50 max-h-64 overflow-y-auto mobile-dropdown">
+                                <div class="p-2 border-b border-borderDark flex justify-between items-center">
+                                    <span class="text-xs text-textMuted uppercase font-bold tracking-wider">Tus Agentes</span>
+                                    <button class="md:hidden text-gray-400 hover:text-white" onclick="event.stopPropagation(); toggleDropdown('agent-dropdown')"><i class="fas fa-times"></i></button>
+                                </div>
+                                <div id="agent-dropdown-list" class="p-1">
+                                    <!-- Se llena por JS -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Selector de Modelo -->
+                        <div class="bg-panelDark border border-borderDark rounded-lg px-4 py-2 flex items-center cursor-pointer hover:border-gray-500 transition relative" onclick="toggleDropdown('model-dropdown')">
+                            <span class="text-sm mr-4 truncate max-w-[120px] sm:max-w-none" id="current-model-display">Cargando modelos...</span>
+                            <i class="fas fa-chevron-down text-xs text-gray-500"></i>
+                            
+                            <!-- Dropdown Menu -->
+                            <div id="model-dropdown" class="hidden absolute sm:top-full top-auto mt-2 sm:right-0 right-auto bg-panelDark border border-borderDark rounded-lg shadow-xl w-64 z-50 max-h-64 overflow-y-auto mobile-dropdown">
+                                <div class="p-2 border-b border-borderDark flex justify-between items-center">
+                                    <span class="text-xs text-textMuted uppercase font-bold tracking-wider">Modelos Locales</span>
+                                    <button class="md:hidden text-gray-400 hover:text-white" onclick="event.stopPropagation(); toggleDropdown('model-dropdown')"><i class="fas fa-times"></i></button>
+                                </div>
+                                <div id="model-dropdown-list" class="p-1">
+                                    <!-- Se llena por JS -->
+                                </div>
+                            </div>
+                        </div>
+                        <div class="hidden sm:flex items-center gap-2">
+                            <button class="top-btn" title="Refrescar"><i class="fas fa-redo-alt"></i></button>
+                            <div class="h-6 w-px bg-borderDark mx-1"></div>
+                            <button class="top-btn active" style="color: var(--primary-color); border-color: var(--primary-color);" title="Activar cerebrito pensante"><i class="fas fa-brain"></i></button>
+                            <button class="top-btn" title="Pantalla Completa"><i class="fas fa-expand"></i></button>
+                            <button class="top-btn" style="color: var(--primary-color); border-color: var(--primary-color);" title="Historial"><i class="far fa-clock"></i></button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chat Messages Area (Flex-grow to take available space) -->
+                <div id="chat-box" class="flex-1 overflow-y-auto pr-4 mb-4" style="min-height: 200px;">
+                    <!-- El chat empieza vacío -->
+                </div>
+
+                <!-- Input Area (Fixed at bottom) -->
+                <div class="pt-4 pb-4 flex-shrink-0 bg-bgDark">
+                    <form id="chat-form" class="flex flex-col sm:flex-row gap-3 items-end">
+                        <div class="input-area w-full sm:flex-1 min-h-[60px] border-2 border-[#ff5555] transition-all duration-300">
+                            <textarea id="user-input" rows="1" placeholder="Message (↵ to send, Shift+↵ for line breaks, paste images)" class="text-gray-300 placeholder-gray-500"></textarea>
+                        </div>
+                        <div class="flex gap-2 w-full sm:w-auto chat-controls-buttons">
+                            <button type="button" onclick="clearChat()" class="flex-1 sm:flex-none bg-[#1c1c1f] hover:bg-[#2d2d30] border border-[#2d2d30] text-white px-3 sm:px-5 py-3 rounded-lg text-sm font-semibold transition whitespace-nowrap h-[60px]">
+                                <span class="sm:hidden"><i class="fas fa-trash"></i></span>
+                                <span class="hidden sm:inline">New session</span>
+                            </button>
+                            <button type="button" id="btn-call" onclick="toggleCallMode()" class="bg-green-600 bg-opacity-20 hover:bg-opacity-40 border border-green-600 text-green-500 px-4 py-3 rounded-lg text-lg transition h-[60px]" title="Modo Llamada Continua">
+                                <i class="fas fa-phone-alt"></i>
+                            </button>
+                            <button type="button" id="btn-mic" onclick="toggleRecording()" class="bg-panelDark hover:bg-borderDark border border-borderDark text-white px-4 py-3 rounded-lg text-lg transition h-[60px]" title="Grabar un mensaje">
+                                <i class="fas fa-microphone"></i>
+                            </button>
+                            <button type="submit" class="flex-1 sm:flex-none bg-[#ff5555] hover:bg-[#ff4444] text-white px-4 sm:px-6 py-3 rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2 h-[60px] shadow-lg">
+                                Send <span class="hidden sm:inline-block bg-white bg-opacity-20 rounded text-[0.6rem] px-1.5 py-0.5 ml-1">↵</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        
+        <!-- OTHER VIEWS (Placeholders) -->
+        <div id="view-resumen" class="view-section flex-1 p-8">
+            <h2 class="text-3xl font-bold mb-4">Resumen de Control</h2>
+            <div class="grid grid-cols-3 gap-6">
+                <div class="bg-panelDark border border-borderDark rounded-xl p-6">
+                    <h3 class="text-textMuted text-sm mb-2">Uso de CPU</h3>
+                    <p class="text-3xl font-bold text-primary">12%</p>
+                </div>
+                <div class="bg-panelDark border border-borderDark rounded-xl p-6">
+                    <h3 class="text-textMuted text-sm mb-2">Memoria RAM</h3>
+                    <p class="text-3xl font-bold text-accent">4.2 GB</p>
+                </div>
+                <div class="bg-panelDark border border-borderDark rounded-xl p-6">
+                    <h3 class="text-textMuted text-sm mb-2">Tareas Activas</h3>
+                    <p class="text-3xl font-bold">0</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- VIEW: AGENTES -->
+        <div id="view-agentes" class="view-section flex-1 p-8 overflow-y-auto">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-3xl font-bold">Gestión de Agentes y Modelos</h2>
+                <button onclick="document.getElementById('modal-crear-agente').classList.remove('hidden')" class="bg-primary hover:bg-primaryHover text-white px-4 py-2 rounded-lg font-medium transition text-sm">
+                    <i class="fas fa-plus mr-2"></i>Crear Agente
+                </button>
+            </div>
+            
+            <div class="grid grid-cols-1 gap-8 mb-8">
+                <!-- Lista de Modelos (movida a su propia vista pero dejamos resumen) -->
+                <div class="bg-panelDark border border-borderDark rounded-xl p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-bold flex items-center"><i class="fas fa-robot text-primary mr-2"></i>Resumen de Entorno</h3>
+                    </div>
+                    <p class="text-textMuted text-sm mb-4">Para gestionar e instalar modelos locales, ve a la sección "Modelos Ollama" en el menú lateral.</p>
+                </div>
+            </div>
+
+            <!-- Tabla de Agentes -->
+            <div class="bg-panelDark border border-borderDark rounded-xl overflow-hidden">
+                <div class="p-4 border-b border-borderDark bg-bgDark">
+                    <h3 class="font-bold text-gray-200">Instancias Activas</h3>
+                </div>
+                <table class="w-full text-left">
+                    <thead class="bg-bgDark border-b border-borderDark text-textMuted text-sm">
+                        <tr>
+                            <th class="p-4 font-medium">Nombre de Agente</th>
+                            <th class="p-4 font-medium">Modelo Base</th>
+                            <th class="p-4 font-medium">Estado</th>
+                            <th class="p-4 font-medium text-right">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="agents-table-body">
+                        <!-- Llenado con JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Modal Crear Agente -->
+        <div id="modal-crear-agente" class="fixed inset-0 bg-black bg-opacity-70 hidden flex items-center justify-center z-50 backdrop-blur-sm">
+            <div class="bg-panelDark border border-borderDark p-6 rounded-xl w-[500px] shadow-2xl">
+                <h3 class="text-xl font-bold mb-4">Crear Nuevo Agente</h3>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs text-textMuted mb-1 uppercase tracking-wider">Nombre del Agente</label>
+                        <input type="text" id="new-agent-name" class="w-full bg-bgDark border border-borderDark text-white p-3 rounded-lg focus:border-primary outline-none" placeholder="Ej. Asistente de Finanzas">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-xs text-textMuted mb-1 uppercase tracking-wider">Modelo Base</label>
+                        <select id="new-agent-model" class="w-full bg-bgDark border border-borderDark text-white p-3 rounded-lg focus:border-primary outline-none">
+                            <!-- Llenado dinámicamente -->
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs text-textMuted mb-1 uppercase tracking-wider">System Prompt (Personalidad)</label>
+                        <textarea id="new-agent-prompt" rows="4" class="w-full bg-bgDark border border-borderDark text-white p-3 rounded-lg focus:border-primary outline-none custom-scrollbar" placeholder="Eres un experto en..."></textarea>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-2 mt-6">
+                    <button onclick="document.getElementById('modal-crear-agente').classList.add('hidden')" class="px-4 py-2 rounded-lg text-sm text-textMuted hover:text-white transition">Cancelar</button>
+                    <button onclick="crearAgente()" class="bg-primary hover:bg-primaryHover text-white px-6 py-2 rounded-lg text-sm font-medium transition flex items-center">
+                        <i class="fas fa-save mr-2"></i>Guardar
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- VIEW: CANALES -->
+        <div id="view-canales" class="view-section flex-1 p-8 overflow-y-auto">
+            <h2 class="text-3xl font-bold mb-2 text-white">Canales de Comunicación</h2>
+            <p class="text-textMuted text-sm mb-8">Vincula Automyx con tus cuentas para que pueda leer y enviar mensajes de forma autónoma.</p>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <!-- WhatsApp Card -->
+                <div class="bg-panelDark border-2 border-borderDark rounded-2xl p-8 flex flex-col items-center text-center shadow-lg transition-transform hover:scale-[1.02]">
+                    <div class="w-20 h-20 bg-green-500 bg-opacity-20 text-green-500 rounded-full flex items-center justify-center text-4xl mb-6 shadow-[0_0_15px_rgba(34,197,94,0.3)]">
+                        <i class="fab fa-whatsapp"></i>
+                    </div>
+                    <h3 class="text-2xl font-bold mb-3 text-white">WhatsApp Web</h3>
+                    <p class="text-gray-400 text-sm mb-8 leading-relaxed">Escanea el código QR para vincular la cuenta. Automyx podrá enviar mensajes usando Playwright.</p>
+                    
+                    <div id="wa-qr-container" class="bg-white p-4 rounded-xl mb-6 hidden shadow-inner border-4 border-gray-200">
+                        <img id="wa-qr-img" src="" alt="Cargando QR..." class="w-40 h-40">
+                    </div>
+                    
+                    <button id="wa-connect-btn" onclick="startWhatsAppAuth()" class="bg-green-600 hover:bg-green-500 text-white px-8 py-3 rounded-xl font-bold transition-all w-full shadow-[0_4px_14px_rgba(34,197,94,0.4)]">
+                        Vincular (Mostrar QR)
+                    </button>
+                    
+                    <span id="wa-status" class="mt-4 text-sm font-semibold text-green-400 hidden bg-green-900 bg-opacity-30 px-4 py-2 rounded-lg border border-green-800">
+                        <i class="fas fa-check-circle mr-2"></i> Vinculado correctamente
+                    </span>
+                </div>
+
+                <!-- Telegram Card -->
+                <div class="bg-panelDark border-2 border-borderDark rounded-2xl p-8 flex flex-col items-center text-center shadow-lg transition-transform hover:scale-[1.02]">
+                    <div class="w-20 h-20 bg-blue-500 bg-opacity-20 text-blue-500 rounded-full flex items-center justify-center text-4xl mb-6 shadow-[0_0_15px_rgba(59,130,246,0.3)]">
+                        <i class="fab fa-telegram-plane"></i>
+                    </div>
+                    <h3 class="text-2xl font-bold mb-3 text-white">Telegram Bot</h3>
+                    <p class="text-gray-400 text-sm mb-8 leading-relaxed">Ingresa el Token de tu Bot de Telegram creado con BotFather para darle acceso a la IA.</p>
+                    
+                    <div class="w-full relative mb-6">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <i class="fas fa-key text-gray-500"></i>
+                        </div>
+                        <input type="password" id="tg-token" placeholder="Ej: 123456789:ABCdefGHIjklMNOpqrs..." class="w-full bg-bgDark border-2 border-borderDark rounded-xl pl-10 pr-4 py-3 text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 outline-none text-sm transition-all shadow-inner">
+                    </div>
+                    
+                    <button id="tg-btn" onclick="connectTelegram()" class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold transition-all w-full shadow-[0_4px_14px_rgba(59,130,246,0.4)]">
+                        Conectar Bot
+                    </button>
+                    
+                    <span id="tg-status" class="mt-4 text-sm font-semibold text-blue-400 hidden bg-blue-900 bg-opacity-30 px-4 py-2 rounded-lg border border-blue-800">
+                        <i class="fas fa-satellite-dish mr-2 animate-pulse"></i> Bot en línea
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- VIEW: TERMINAL -->
+        <div id="view-terminal" class="view-section flex-1 p-4 sm:p-8 overflow-y-auto flex flex-col">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                <div>
+                    <h2 class="text-2xl sm:text-3xl font-bold text-white">Web Terminal</h2>
+                    <p class="text-textMuted text-xs sm:text-sm">Ejecuta cualquier comando del sistema (dir, ping, ollama run, pip install).</p>
+                </div>
+                <button onclick="document.getElementById('web-terminal-output').innerHTML = '> Terminal web iniciada.\n'" class="bg-panelDark hover:bg-borderDark border border-borderDark px-4 py-2 rounded transition text-sm w-full sm:w-auto">
+                    <i class="fas fa-eraser mr-2"></i>Limpiar
+                </button>
+            </div>
+            
+            <div class="bg-[#0c0c0c] border border-borderDark rounded-xl overflow-hidden flex flex-col flex-1 shadow-2xl relative">
+                <!-- Barra de título estilo ventana -->
+                <div class="bg-[#1e1e1e] border-b border-borderDark p-3 flex justify-between items-center select-none">
+                    <div class="flex gap-2">
+                        <div class="w-3 h-3 rounded-full bg-red-500 hover:bg-red-400 cursor-pointer"></div>
+                        <div class="w-3 h-3 rounded-full bg-yellow-500 hover:bg-yellow-400 cursor-pointer"></div>
+                        <div class="w-3 h-3 rounded-full bg-green-500 hover:bg-green-400 cursor-pointer"></div>
+                    </div>
+                    <span class="text-xs font-mono text-gray-400 absolute left-1/2 transform -translate-x-1/2">cmd.exe - Automyx Web Shell</span>
+                    <i class="fas fa-cog text-gray-500 hover:text-white cursor-pointer"></i>
+                </div>
+                
+                <!-- Área de salida -->
+                <div id="web-terminal-output" class="p-4 flex-1 font-mono text-sm text-[#cccccc] overflow-y-auto whitespace-pre-wrap" style="font-family: 'Consolas', 'Courier New', monospace;">
+Microsoft Windows [Versión Web Shell]
+(c) Automyx Corporation. Todos los derechos reservados.
+
+C:\Users\Automyx> 
+                </div>
+                
+                <!-- Área de entrada -->
+                <div class="flex items-center gap-2 p-3 bg-[#0c0c0c] border-t border-[#1e1e1e]">
+                    <span class="text-white font-mono text-sm font-bold">C:\Users\Automyx></span>
+                    <input type="text" id="web-terminal-input" class="flex-1 bg-transparent border-none outline-none text-white font-mono text-sm caret-white" placeholder="Escribe un comando..." autocomplete="off" spellcheck="false" onkeydown="if(event.key === 'Enter') executeWebTerminalCmd()">
+                </div>
+            </div>
+        </div>
+        <div id="view-preview" class="view-section flex-1 h-full flex flex-col bg-white">
+            <div class="flex justify-between items-center p-3 border-b border-gray-300 bg-gray-100 flex-shrink-0">
+                <div class="flex items-center gap-3">
+                    <div class="flex gap-1.5">
+                        <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                        <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                        <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                    </div>
+                    <div class="bg-white px-4 py-1 rounded text-xs text-gray-600 font-mono border border-gray-300 shadow-sm flex items-center">
+                        <i class="fas fa-lock text-green-600 mr-2"></i> localhost:8000/preview
+                    </div>
+                </div>
+                <button onclick="document.getElementById('preview-frame').src='/preview?t=' + new Date().getTime()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-medium transition flex items-center gap-2 shadow-sm">
+                    <i class="fas fa-sync-alt"></i> Recargar
+                </button>
+            </div>
+            <iframe id="preview-frame" src="/preview" class="flex-1 w-full border-none"></iframe>
+        </div>
+
+        <!-- VIEW: CONFIGURACION -->
+        <div id="view-configuracion" class="view-section flex-1 p-8 overflow-y-auto">
+            <h2 class="text-3xl font-bold mb-6">Configuración del Sistema</h2>
+            <div class="max-w-3xl space-y-6">
+                <!-- ElevenLabs -->
+                <div class="bg-panelDark border border-borderDark rounded-xl p-6">
+                    <h3 class="text-lg font-bold mb-2 flex items-center"><i class="fas fa-microphone-alt text-accent mr-2"></i> Voz (ElevenLabs API)</h3>
+                    <p class="text-sm text-textMuted mb-4">Configura tu API Key de ElevenLabs para que Automyx pueda hablarte con voz realista. El reconocimiento de voz usa tu micrófono local.</p>
+                    <div class="flex gap-3 mb-4">
+                        <input type="password" id="elevenlabs-token" class="flex-1 bg-bgDark border border-borderDark text-white p-3 rounded-lg focus:border-primary outline-none" placeholder="sk_...">
+                        <button onclick="saveElevenLabs()" class="bg-primary hover:bg-primaryHover text-white px-6 py-3 rounded-lg font-medium transition">Guardar</button>
+                    </div>
+                    
+                    <div class="mt-4 border-t border-borderDark pt-4">
+                        <label class="block text-xs text-textMuted mb-2 uppercase tracking-wider">Seleccionar Voz de IA</label>
+                        <select id="elevenlabs-voice-id" class="w-full bg-bgDark border border-borderDark text-white p-3 rounded-lg focus:border-primary outline-none">
+                            <option value="EXAVITQu4vr4xnSDxMaL">Bella (Voz suave y amable - Español)</option>
+                            <option value="pNInz6obpgDQGcFmaJcg">Adam (Voz profunda y profesional - Inglés/Español)</option>
+                            <option value="ErXwobaYiN019PkySvjV">Antoni (Voz enérgica y joven - Español)</option>
+                            <option value="MF3mGyEYCl7XYWbV9V6O">Elli (Voz emocional y expresiva)</option>
+                        </select>
+                        <p class="text-xs text-textMuted mt-2"><i class="fas fa-bolt text-yellow-500 mr-1"></i> Usando modelo 'eleven_turbo_v2' para latencia ultra-baja.</p>
+                    </div>
+                </div>
+
+                <div class="bg-panelDark border border-borderDark rounded-xl p-6">
+                    <h3 class="text-lg font-bold mb-2">Telegram Bot Token</h3>
+                    <p class="text-sm text-textMuted mb-4">Conecta Automyx a Telegram.</p>
+                    <div class="flex gap-3">
+                        <input type="password" id="telegram-token" class="flex-1 bg-bgDark border border-borderDark text-white p-3 rounded-lg focus:border-primary outline-none" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
+                        <button onclick="saveTelegram()" class="bg-primary hover:bg-primaryHover text-white px-6 py-3 rounded-lg font-medium transition">Guardar</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- VIEW: AUTOMATIZACION -->
+        <div id="view-automatizacion" class="view-section flex-1 p-4 sm:p-8 overflow-y-auto">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                <div>
+                    <h2 class="text-2xl sm:text-3xl font-bold mb-1">Automatización y Rutinas</h2>
+                    <p class="text-textMuted text-xs sm:text-sm">Programa alarmas, tareas recurrentes y trabajos para que Automyx los ejecute solo.</p>
+                </div>
+                <button onclick="document.getElementById('modal-create-task').classList.remove('hidden')" class="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center shadow-lg w-full sm:w-auto justify-center">
+                    <i class="fas fa-plus mr-2"></i> Nueva Tarea
+                </button>
+            </div>
+
+            <!-- Grid de Tareas -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="tasks-grid">
+                <!-- Se llena con JS -->
+            </div>
+        </div>
+
+        <!-- VIEW: NODOS -->
+        <div id="view-nodos" class="view-section flex-1 p-4 sm:p-8 overflow-y-auto">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                <div>
+                    <h2 class="text-2xl sm:text-3xl font-bold mb-1">Clúster de Nodos</h2>
+                    <p class="text-textMuted text-xs sm:text-sm">Monitoriza y gestiona las máquinas y servicios conectados a la red Automyx.</p>
+                </div>
+                <button onclick="fetchNodos()" class="bg-panelDark hover:bg-borderDark border border-borderDark text-white px-4 py-2 rounded-lg text-sm transition flex items-center w-full sm:w-auto justify-center">
+                    <i class="fas fa-sync-alt mr-2"></i> Actualizar
+                </button>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="nodos-grid">
+                <!-- Se llena por JS -->
+            </div>
+        </div>
+
+        <!-- VIEW: HABILIDADES -->
+        <div id="view-habilidades" class="view-section flex-1 p-4 sm:p-8 overflow-y-auto">
+            <h2 class="text-2xl sm:text-3xl font-bold mb-2">Habilidades, Marketplace y Motor Autónomo</h2>
+            <p class="text-textMuted text-xs sm:text-sm mb-6">Controla permisos, habilita habilidades de la comunidad y activa el Motor Heartbeat para autonomía.</p>
+            
+            <!-- Tabs de Navegación -->
+            <div class="flex gap-2 mb-6 border-b border-borderDark pb-2">
+                <button class="px-4 py-2 rounded-t-lg bg-primary text-white font-bold" onclick="switchSkillsTab('permisos')">Permisos de Agentes</button>
+                <button class="px-4 py-2 rounded-t-lg bg-panelDark text-gray-400 hover:text-white" onclick="switchSkillsTab('marketplace')">Marketplace de Habilidades</button>
+                <button class="px-4 py-2 rounded-t-lg bg-panelDark text-gray-400 hover:text-white" onclick="switchSkillsTab('heartbeat')">Heartbeat Engine</button>
+            </div>
+
+            <!-- Tab: Permisos de Agentes -->
+            <div id="skills-tab-permisos" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Lista de agentes para configurar -->
+                <div class="col-span-1 lg:col-span-1 bg-panelDark border border-borderDark rounded-xl p-4 h-fit max-h-[300px] lg:max-h-none overflow-y-auto custom-scrollbar">
+                    <h3 class="text-sm font-bold text-gray-300 uppercase tracking-wider mb-4 border-b border-borderDark pb-2 sticky top-0 bg-panelDark">Selecciona un Agente</h3>
+                    <div id="skills-agent-list" class="space-y-2">
+                        <!-- Llenado por JS -->
+                    </div>
+                </div>
+
+                <!-- Panel de Permisos -->
+                <div class="col-span-1 lg:col-span-2 bg-panelDark border border-borderDark rounded-xl p-4 sm:p-6 relative">
+                    <div id="skills-overlay" class="absolute inset-0 bg-black bg-opacity-50 z-10 flex items-center justify-center rounded-xl backdrop-blur-sm">
+                        <span class="text-white font-medium">Selecciona un agente primero</span>
+                    </div>
+                    
+                    <h3 class="text-xl font-bold mb-1" id="skills-agent-name">Configurando: Ninguno</h3>
+                    <p class="text-xs text-textMuted mb-6 border-b border-borderDark pb-4">Define los límites de operación de este agente.</p>
+                    
+                    <div class="space-y-6">
+                        <!-- Permiso de Lectura -->
+                        <div class="flex items-start gap-4 p-4 border border-borderDark rounded-lg hover:bg-bgDark transition">
+                            <div class="pt-1">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="perm-read" class="sr-only peer" checked disabled>
+                                    <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                                </label>
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-white text-sm"><i class="fas fa-eye text-blue-400 mr-2"></i>Modo Lectura (Básico)</h4>
+                                <p class="text-xs text-gray-400 mt-1">El agente puede leer información, ver archivos, hacer web scraping pasivo y analizar datos. <span class="text-gray-500 italic">(Siempre activado)</span></p>
+                            </div>
+                        </div>
+
+                        <!-- Permiso de Escritura / Autonomía -->
+                        <div class="flex items-start gap-4 p-4 border border-borderDark rounded-lg hover:bg-bgDark transition">
+                            <div class="pt-1">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="perm-write" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
+                                </label>
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-white text-sm"><i class="fas fa-edit text-green-400 mr-2"></i>Modo Escritura / Acción</h4>
+                                <p class="text-xs text-gray-400 mt-1">Permite al agente modificar archivos, enviar mensajes, postear en redes sociales y crear contenido nuevo. Si se desactiva, el agente solo será un consejero.</p>
+                            </div>
+                        </div>
+
+                        <!-- Permiso Control Total de PC -->
+                        <div class="flex items-start gap-4 p-4 border border-red-900 bg-red-900 bg-opacity-10 rounded-lg hover:bg-opacity-20 transition">
+                            <div class="pt-1">
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="perm-pc" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600"></div>
+                                </label>
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-red-400 text-sm"><i class="fas fa-laptop-code mr-2"></i>Control de PC / Sistema</h4>
+                                <p class="text-xs text-gray-400 mt-1">Otorga permisos nivel Dios. El agente podrá ejecutar comandos en terminal, abrir/cerrar programas, instalar dependencias, controlar el mouse y teclado.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 flex justify-end">
+                        <button onclick="saveAgentSkills()" class="bg-primary hover:bg-primaryHover text-white px-6 py-2 rounded-lg font-bold transition flex items-center shadow-lg">
+                            <i class="fas fa-save mr-2"></i> Guardar Permisos
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab: Marketplace de Habilidades -->
+            <div id="skills-tab-marketplace" class="hidden grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Habilidad 1: Analizador de Datos -->
+                <div class="bg-panelDark border border-borderDark rounded-xl p-6 hover:border-primary transition">
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="w-12 h-12 rounded-lg bg-blue-900/30 flex items-center justify-center text-blue-400 text-2xl">
+                            <i class="fas fa-chart-bar"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-white">Data Analyst Pro</h3>
+                            <p class="text-xs text-textMuted">Analiza CSVs, Excel y genera gráficos</p>
+                        </div>
+                    </div>
+                    <p class="text-sm text-gray-400 mb-4">Habilidad avanzada para análisis exploratorio de datos, generación de gráficos y reportes automáticos con Pandas y Matplotlib.</p>
+                    <button class="w-full bg-primary hover:bg-primaryHover text-white py-2 rounded-lg font-medium transition">Instalar Habilidad</button>
+                </div>
+
+                <!-- Habilidad 2: Editor de Video -->
+                <div class="bg-panelDark border border-borderDark rounded-xl p-6 hover:border-purple-500 transition">
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="w-12 h-12 rounded-lg bg-purple-900/30 flex items-center justify-center text-purple-400 text-2xl">
+                            <i class="fas fa-video"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-white">Video Editor Autónomo</h3>
+                            <p class="text-xs text-textMuted">Edita videos con FFmpeg</p>
+                        </div>
+                    </div>
+                    <p class="text-sm text-gray-400 mb-4">Recorta, une, añade música y subtítulos automáticamente. Crea contenido para redes sociales en segundos.</p>
+                    <button class="w-full bg-purple-600 hover:bg-purple-500 text-white py-2 rounded-lg font-medium transition">Instalar Habilidad</button>
+                </div>
+
+                <!-- Habilidad 3: Gestor de Correos -->
+                <div class="bg-panelDark border border-borderDark rounded-xl p-6 hover:border-green-500 transition">
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="w-12 h-12 rounded-lg bg-green-900/30 flex items-center justify-center text-green-400 text-2xl">
+                            <i class="fas fa-envelope"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-white">Email Manager</h3>
+                            <p class="text-xs text-textMuted">Gestiona tu bandeja de entrada</p>
+                        </div>
+                    </div>
+                    <p class="text-sm text-gray-400 mb-4">Lee, organiza y responde correos automáticamente. Crea borradores y envía respuestas personalizadas.</p>
+                    <button class="w-full bg-green-600 hover:bg-green-500 text-white py-2 rounded-lg font-medium transition">Instalar Habilidad</button>
+                </div>
+
+                <!-- Habilidad 4: Web Scraper -->
+                <div class="bg-panelDark border border-borderDark rounded-xl p-6 hover:border-orange-500 transition">
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="w-12 h-12 rounded-lg bg-orange-900/30 flex items-center justify-center text-orange-400 text-2xl">
+                            <i class="fas fa-spider"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-white">Web Scraper Pro</h3>
+                            <p class="text-xs text-textMuted">Extrae datos de sitios web</p>
+                        </div>
+                    </div>
+                    <p class="text-sm text-gray-400 mb-4">Scraping avanzado con Playwright. Navega sitios, extrae datos y guarda en JSON/CSV automáticamente.</p>
+                    <button class="w-full bg-orange-600 hover:bg-orange-500 text-white py-2 rounded-lg font-medium transition">Instalar Habilidad</button>
+                </div>
+
+                <!-- Habilidad 5: Redes Sociales -->
+                <div class="bg-panelDark border border-borderDark rounded-xl p-6 hover:border-pink-500 transition">
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="w-12 h-12 rounded-lg bg-pink-900/30 flex items-center justify-center text-pink-400 text-2xl">
+                            <i class="fas fa-share-alt"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-white">Social Media Manager</h3>
+                            <p class="text-xs text-textMuted">Publica y gestiona redes</p>
+                        </div>
+                    </div>
+                    <p class="text-sm text-gray-400 mb-4">Crea contenido, publica y analiza métricas en múltiples plataformas sociales automáticamente.</p>
+                    <button class="w-full bg-pink-600 hover:bg-pink-500 text-white py-2 rounded-lg font-medium transition">Instalar Habilidad</button>
+                </div>
+
+                <!-- Habilidad 6: Desarrollador Autónomo -->
+                <div class="bg-panelDark border border-borderDark rounded-xl p-6 hover:border-cyan-500 transition">
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="w-12 h-12 rounded-lg bg-cyan-900/30 flex items-center justify-center text-cyan-400 text-2xl">
+                            <i class="fas fa-code"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-white">Auto Developer</h3>
+                            <p class="text-xs text-textMuted">Crea proyectos completos</p>
+                        </div>
+                    </div>
+                    <p class="text-sm text-gray-400 mb-4">Genera código, estructura proyectos, instala dependencias y ejecuta tests automáticamente.</p>
+                    <button class="w-full bg-cyan-600 hover:bg-cyan-500 text-white py-2 rounded-lg font-medium transition">Instalar Habilidad</button>
+                </div>
+            </div>
+
+            <!-- Tab: Heartbeat Engine -->
+            <div id="skills-tab-heartbeat" class="hidden bg-panelDark border border-borderDark rounded-xl p-8">
+                <div class="text-center mb-8">
+                    <div class="inline-flex items-center justify-center w-20 h-20 rounded-full bg-purple-900/30 text-purple-400 text-4xl mb-4">
+                        <i class="fas fa-heartbeat"></i>
+                    </div>
+                    <h3 class="text-3xl font-bold text-white mb-2">Motor Heartbeat (Autonomía Total)</h3>
+                    <p class="text-textMuted">El corazón de Automyx. Activa la monitorización y ejecución automática sin intervención humana.</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                    <!-- Configuración Heartbeat -->
+                    <div class="space-y-6">
+                        <div class="flex items-center justify-between p-4 border border-borderDark rounded-lg">
+                            <div>
+                                <h4 class="font-bold text-white"><i class="fas fa-power-off text-green-400 mr-2"></i>Estado del Motor</h4>
+                                <p class="text-xs text-gray-400">Activa/desactiva el Motor Heartbeat</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="heartbeat-toggle" class="sr-only peer">
+                                <div class="w-14 h-7 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-green-600"></div>
+                            </label>
+                        </div>
+
+                        <div class="p-4 border border-borderDark rounded-lg">
+                            <h4 class="font-bold text-white mb-3"><i class="fas fa-clock text-blue-400 mr-2"></i>Intervalo de Verificación</h4>
+                            <select id="heartbeat-interval" class="w-full bg-bgDark border border-borderDark text-white p-3 rounded-lg focus:border-primary outline-none">
+                                <option value="30">Cada 30 segundos</option>
+                                <option value="60">Cada 1 minuto</option>
+                                <option value="300">Cada 5 minutos</option>
+                                <option value="600" selected>Cada 10 minutos</option>
+                                <option value="1800">Cada 30 minutos</option>
+                                <option value="3600">Cada hora</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Funcionalidades Heartbeat -->
+                    <div class="space-y-4">
+                        <h4 class="font-bold text-white border-b border-borderDark pb-2">Capacidades Autónomas</h4>
+                        
+                        <div class="flex items-start gap-3 p-3 border border-borderDark rounded-lg hover:bg-bgDark transition">
+                            <input type="checkbox" id="hb-morning" class="mt-1" checked>
+                            <div>
+                                <h5 class="font-medium text-white text-sm">Briefing Matutino</h5>
+                                <p class="text-xs text-gray-400">Envía un resumen de noticias, clima y tareas del día cada mañana.</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start gap-3 p-3 border border-borderDark rounded-lg hover:bg-bgDark transition">
+                            <input type="checkbox" id="hb-monitor" class="mt-1" checked>
+                            <div>
+                                <h5 class="font-medium text-white text-sm">Monitor de Sistema</h5>
+                                <p class="text-xs text-gray-400">Supervisa recursos del PC y alerta de problemas (CPU, RAM, disco).</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start gap-3 p-3 border border-borderDark rounded-lg hover:bg-bgDark transition">
+                            <input type="checkbox" id="hb-backups" class="mt-1">
+                            <div>
+                                <h5 class="font-medium text-white text-sm">Backups Automáticos</h5>
+                                <p class="text-xs text-gray-400">Realiza copias de seguridad periódicas de archivos importantes.</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start gap-3 p-3 border border-borderDark rounded-lg hover:bg-bgDark transition">
+                            <input type="checkbox" id="hb-learning" class="mt-1">
+                            <div>
+                                <h5 class="font-medium text-white text-sm">Aprendizaje Continuo</h5>
+                                <p class="text-xs text-gray-400">Analiza tus hábitos y sugiere mejoras de productividad.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-3">
+                    <button class="bg-borderDark hover:bg-panelDark text-white px-6 py-2 rounded-lg font-medium transition">Restablecer</button>
+                    <button class="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2 rounded-lg font-bold transition shadow-lg">Guardar Configuración Heartbeat</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- VIEW: ACERCA DE -->
+        <div id="view-acerca" class="view-section flex-1 p-4 sm:p-12 overflow-y-auto bg-[#0a0a0c] custom-scrollbar">
+            <div class="max-w-5xl mx-auto w-full">
+                <!-- Header Hero -->
+                <div class="relative bg-panelDark border border-borderDark rounded-3xl p-10 sm:p-16 text-center shadow-2xl overflow-hidden mb-12 group">
+                    <div class="absolute -top-32 -right-32 w-96 h-96 bg-primary rounded-full mix-blend-screen filter blur-[120px] opacity-30 group-hover:opacity-50 transition duration-700"></div>
+                    <div class="absolute -bottom-32 -left-32 w-96 h-96 bg-accent rounded-full mix-blend-screen filter blur-[120px] opacity-30 group-hover:opacity-50 transition duration-700"></div>
+                    
+                    <div class="relative z-10">
+                        <div class="inline-flex items-center justify-center w-32 h-32 rounded-3xl bg-black border border-borderDark shadow-[0_0_40px_rgba(59,130,246,0.4)] mb-8 overflow-hidden">
+                             <img src="/assets/logo.png" alt="Automyx Logo" class="w-full h-full object-cover" onerror="console.error('Error cargando logo acerca de', this.src);">
+                         </div>
+                         <h1 class="text-5xl sm:text-7xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-white via-gray-200 to-gray-500 tracking-tight mb-4">AUTOMYX</h1>
+                         <p class="text-xl sm:text-2xl text-primary font-mono tracking-widest uppercase mb-4">Nivel Élite - Versión 2.5</p>
+                         <p class="text-lg text-gray-400 max-w-2xl mx-auto leading-relaxed mb-6">
+                             El primer motor de Inteligencia Artificial de arquitectura local diseñado con capacidades de ejecución autónoma, razonamiento cognitivo avanzado y control directo de sistemas operativos.
+                        </p>
+                        <div class="flex flex-wrap justify-center gap-4">
+                            <span class="px-4 py-2 bg-primary/20 border border-primary/30 rounded-full text-primary text-sm font-bold">AUMFORMBRING</span>
+                            <span class="px-4 py-2 bg-purple-500/20 border border-purple-500/30 rounded-full text-purple-400 text-sm font-bold">PROJECT AUTOPILOT</span>
+                            <span class="px-4 py-2 bg-blue-500/20 border border-blue-500/30 rounded-full text-blue-400 text-sm font-bold">BLENDER</span>
+                            <span class="px-4 py-2 bg-green-500/20 border border-green-500/30 rounded-full text-green-400 text-sm font-bold">UNIVERSAL APP CONTROL</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Grid de Características -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+                    <div class="bg-panelDark border border-borderDark rounded-2xl p-6 hover:border-primary transition duration-300">
+                        <i class="fas fa-robot text-3xl text-blue-400 mb-4"></i>
+                        <h3 class="text-xl font-bold text-white mb-3">Arquitectura Neuronal</h3>
+                        <p class="text-gray-400 text-sm leading-relaxed">
+                            Modelos de lenguaje de gran escala (LLaMA 3, Mistral, Qwen) orquestados localmente. Privacidad total sin servidores de terceros.
+                        </p>
+                    </div>
+                    
+                    <div class="bg-panelDark border border-borderDark rounded-2xl p-6 hover:border-pink-500 transition duration-300">
+                        <i class="fas fa-magic text-3xl text-pink-400 mb-4"></i>
+                        <h3 class="text-xl font-bold text-white mb-3">AUMFORMBRING</h3>
+                        <p class="text-gray-400 text-sm leading-relaxed">
+                            Sistema de auto-aprendizaje y auto-mejora. Memoria perpetua, extracción de patrones, y creación automática de habilidades.
+                        </p>
+                    </div>
+                    
+                    <div class="bg-panelDark border border-borderDark rounded-2xl p-6 hover:border-green-500 transition duration-300">
+                        <i class="fas fa-rocket text-3xl text-green-400 mb-4"></i>
+                        <h3 class="text-xl font-bold text-white mb-3">Project Autopilot</h3>
+                        <p class="text-gray-400 text-sm leading-relaxed">
+                            Autonomía 100% de proyectos. Analiza, detecta bugs, corrige, genera documentación y hace commits automáticos.
+                        </p>
+                    </div>
+
+                    <div class="bg-panelDark border border-borderDark rounded-2xl p-6 hover:border-cyan-400 transition duration-300">
+                        <i class="fas fa-cube text-3xl text-cyan-400 mb-4"></i>
+                        <h3 class="text-xl font-bold text-white mb-3">Blender Profesional</h3>
+                        <p class="text-gray-400 text-sm leading-relaxed">
+                            Crea, edita, anima y renderiza modelos 3D profesionales. Primitivas, materiales, transformaciones y exportación.
+                        </p>
+                    </div>
+
+                    <div class="bg-panelDark border border-borderDark rounded-2xl p-6 hover:border-yellow-400 transition duration-300">
+                        <i class="fas fa-image text-3xl text-yellow-400 mb-4"></i>
+                        <h3 class="text-xl font-bold text-white mb-3">Photo Editor Pro</h3>
+                        <p class="text-gray-400 text-sm leading-relaxed">
+                            Edición de imágenes profesional. Redimensionar, recortar, filtros, marca de agua, collages y mucho más.
+                        </p>
+                    </div>
+
+                    <div class="bg-panelDark border border-borderDark rounded-2xl p-6 hover:border-orange-400 transition duration-300">
+                        <i class="fas fa-desktop text-3xl text-orange-400 mb-4"></i>
+                        <h3 class="text-xl font-bold text-white mb-3">Universal App Control</h3>
+                        <p class="text-gray-400 text-sm leading-relaxed">
+                            Control total de cualquier aplicación. Activar ventanas, clic, escribir, hotkeys, automatizar secuencias.
+                        </p>
+                    </div>
+
+                    <div class="bg-panelDark border border-borderDark rounded-2xl p-6 hover:border-red-400 transition duration-300">
+                        <i class="fas fa-laptop-code text-3xl text-red-400 mb-4"></i>
+                        <h3 class="text-xl font-bold text-white mb-3">Control de Sistema</h3>
+                        <p class="text-gray-400 text-sm leading-relaxed">
+                            Ejecutar comandos, gestionar archivos, abrir programas, instalar dependencias. Control total de tu PC.
+                        </p>
+                    </div>
+
+                    <div class="bg-panelDark border border-borderDark rounded-2xl p-6 hover:border-purple-400 transition duration-300">
+                        <i class="fas fa-globe text-3xl text-purple-400 mb-4"></i>
+                        <h3 class="text-xl font-bold text-white mb-3">Multi-Plataforma</h3>
+                        <p class="text-gray-400 text-sm leading-relaxed">
+                            Windows, macOS y Raspberry Pi. Convierte cualquier dispositivo en un nodo de IA potente y descentralizado.
+                        </p>
+                    </div>
+
+                    <div class="bg-panelDark border border-borderDark rounded-2xl p-6 hover:border-indigo-400 transition duration-300">
+                        <i class="fas fa-microphone-alt text-3xl text-indigo-400 mb-4"></i>
+                        <h3 class="text-xl font-bold text-white mb-3">Voz en Tiempo Real</h3>
+                        <p class="text-gray-400 text-sm leading-relaxed">
+                            Modo Llamada con ElevenLabs, reconocimiento de voz, y conversaciones fluidas y naturales.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Sección dedicada al Gateway -->
+                <div class="bg-gradient-to-r from-blue-900/30 to-purple-900/30 border border-blue-500/30 rounded-3xl p-10 sm:p-12 mb-12 relative overflow-hidden">
+                    <div class="absolute top-0 right-0 w-64 h-64 bg-primary rounded-full mix-blend-overlay filter blur-[100px] opacity-20"></div>
+                    <h3 class="text-3xl font-bold text-white mb-6 relative z-10 flex items-center">
+                        <i class="fas fa-plug text-primary mr-3"></i>El Gateway: El Corazón de Automyx
+                    </h3>
+                    <p class="text-lg text-gray-300 mb-6 relative z-10">
+                        El Gateway es el componente central que une todo. Es el servidor que se ejecuta en tu máquina y actúa como intermediario entre:
+                    </p>
+                    <ul class="space-y-4 text-gray-300 relative z-10">
+                        <li class="flex items-start gap-3">
+                            <i class="fas fa-comment text-primary mt-1"></i>
+                            <div>
+                                <strong class="text-white">La Interfaz Web (Dashboard)</strong>: Donde tú interactúas con el chat, configuras agentes y usas las habilidades.
+                            </div>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <i class="fas fa-robot text-primary mt-1"></i>
+                            <div>
+                                <strong class="text-white">Los Agentes y LLMs</strong>: Los modelos de IA que generan las respuestas y toman decisiones.
+                            </div>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <i class="fas fa-cogs text-primary mt-1"></i>
+                            <div>
+                                <strong class="text-white">Las Habilidades y Herramientas</strong>: Todo lo que permite a Automyx interactuar con el mundo real (ejecutar comandos, editar archivos, navegar por la web, etc.).
+                            </div>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <i class="fas fa-plug-circle-bolt text-primary mt-1"></i>
+                            <div>
+                                <strong class="text-white">Tu Sistema Operativo</strong>: Windows, macOS o Linux, donde se ejecutan todas las acciones.
+                            </div>
+                        </li>
+                    </ul>
+                    <div class="mt-8 bg-panelDark/50 border border-borderDark rounded-2xl p-6 relative z-10">
+                        <h4 class="text-xl font-bold text-white mb-3"><i class="fas fa-key mr-2 text-yellow-400"></i>¿Para qué es el Token?</h4>
+                        <p class="text-gray-400 text-sm">
+                            El token es tu llave de seguridad personal. Garantiza que solo tú (o quien tenga el token) pueda acceder y controlar tu Gateway. Es generado aleatoriamente cada vez que inicias el servidor y se muestra en la terminal.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Licencia y Restricciones (EULA) -->
+                <div class="bg-[#1a0f0f] border border-red-900/50 rounded-2xl p-8 mb-12 relative overflow-hidden">
+                    <div class="absolute top-0 left-0 w-1 h-full bg-red-600"></div>
+                    <div class="flex items-center gap-4 mb-6 border-b border-red-900/30 pb-4">
+                        <i class="fas fa-file-contract text-red-500 text-2xl"></i>
+                        <h3 class="text-2xl font-bold text-white tracking-wide">Licencia de Uso Restringido (EULA)</h3>
+                    </div>
+                    <div class="text-gray-300 text-sm space-y-4 leading-relaxed font-mono">
+                        <p>
+                            <strong>ADVERTENCIA DE SEGURIDAD:</strong> Debido a las capacidades avanzadas de ejecución autónoma, evasión de restricciones y control de sistemas a bajo nivel que posee este software, <strong>Automyx está clasificado como una herramienta de grado militar/corporativo restringido.</strong>
+                        </p>
+                        <p class="text-red-400">
+                            Queda estrictamente prohibida la copia, distribución, modificación o uso comercial y personal de este software sin la autorización explícita, formal y por escrito de <strong>Nexora Technology LLC</strong>.
+                        </p>
+                        <ul class="list-disc pl-5 space-y-2 text-gray-400">
+                            <li>Cualquier entidad o individuo que desee desplegar nodos de Automyx debe solicitar una licencia de operación directa a la matriz corporativa.</li>
+                            <li>El usuario asume toda la responsabilidad por las acciones ejecutadas por la Inteligencia Artificial dentro de su red local o en redes externas (OSINT, Web Scraping).</li>
+                            <li>Nexora Technology LLC se reserva el derecho de revocar el acceso y desactivar remotamente cualquier instancia no autorizada.</li>
+                        </ul>
+                    </div>
+                    <div class="mt-6 flex justify-end">
+                        <button class="bg-red-900/20 border border-red-900/50 text-red-400 hover:bg-red-900/40 hover:text-white px-6 py-2 rounded transition text-xs font-bold uppercase tracking-widest">
+                            Solicitar Licencia a Nexora
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Footer de la empresa -->
+                <div class="bg-gradient-to-r from-[#111] to-[#1a1a1a] border border-gray-800 rounded-2xl p-10 text-center relative overflow-hidden">
+                    <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-primary to-transparent opacity-50"></div>
+                    <p class="text-sm text-gray-500 uppercase tracking-[0.3em] font-bold mb-4">Diseñado, Desarrollado y Presentado por</p>
+                    <h2 class="text-3xl sm:text-4xl font-black text-white tracking-widest mb-3">NEXORA TECHNOLOGY LLC</h2>
+                    <div class="flex items-center justify-center gap-2 text-gray-400">
+                        <i class="fas fa-map-marker-alt text-red-500"></i>
+                        <span>Lake Worth, Florida, United States of America.</span>
+                    </div>
+                    <div class="mt-8 pt-8 border-t border-gray-800 text-xs text-gray-600">
+                        &copy; 2026 Nexora Technology LLC. Todos los derechos reservados. El código fuente, los algoritmos de enrutamiento y la arquitectura de Gateway de Automyx son propiedad intelectual exclusiva.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Generic Placeholder View -->
+        <div id="view-placeholder" class="view-section flex-1 p-8 items-center justify-center text-center h-full">
+            <div class="flex flex-col items-center justify-center mt-20">
+                <i class="fas fa-tools text-6xl text-borderDark mb-4"></i>
+                <h2 class="text-2xl font-bold text-gray-400">Sección en construcción</h2>
+                <p class="text-textMuted mt-2">Esta vista estará disponible en la próxima actualización.</p>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        // DOM Elements
+        const chatBox = document.getElementById('chat-box');
+        const chatForm = document.getElementById('chat-form');
+        const userInput = document.getElementById('user-input');
+
+        // Theme Management Logic
+        const themes = {
+            dark: {
+                '--bg-color': '#121214',
+                '--panel-color': '#1c1c1f',
+                '--border-color': '#2d2d30',
+                '--text-color': '#d1d5db',
+                '--text-bold': '#e5e7eb',
+                '--muted-color': '#9ca3af',
+                '--primary-color': '#3b82f6',
+                '--hover-bg': 'rgba(59, 130, 246, 0.1)',
+                '--active-bg': 'rgba(59, 130, 246, 0.15)',
+                '--active-border': 'rgba(59, 130, 246, 0.3)'
+            },
+            light: {
+                '--bg-color': '#f9fafb',
+                '--panel-color': '#ffffff',
+                '--border-color': '#e5e7eb',
+                '--text-color': '#374151',
+                '--text-bold': '#111827',
+                '--muted-color': '#6b7280',
+                '--primary-color': '#2563eb',
+                '--hover-bg': 'rgba(37, 99, 235, 0.05)',
+                '--active-bg': 'rgba(37, 99, 235, 0.1)',
+                '--active-border': 'rgba(37, 99, 235, 0.2)'
+            },
+            blue: {
+                '--bg-color': '#0f172a',
+                '--panel-color': '#1e293b',
+                '--border-color': '#334155',
+                '--text-color': '#cbd5e1',
+                '--text-bold': '#f8fafc',
+                '--muted-color': '#94a3b8',
+                '--primary-color': '#38bdf8',
+                '--hover-bg': 'rgba(56, 189, 248, 0.1)',
+                '--active-bg': 'rgba(56, 189, 248, 0.15)',
+                '--active-border': 'rgba(56, 189, 248, 0.3)'
+            }
+        };
+
+        function setTheme(themeName) {
+            const root = document.documentElement;
+            const theme = themes[themeName];
+            
+            for (const [key, value] of Object.entries(theme)) {
+                root.style.setProperty(key, value);
+            }
+            
+            // Update active state of buttons
+            document.querySelectorAll('#btn-theme-blue, #btn-theme-light, #btn-theme-dark').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(`btn-theme-${themeName}`).classList.add('active');
+            
+            // Toggle body classes for Tailwind overrides if necessary
+            if(themeName === 'light') {
+                root.classList.remove('dark');
+            } else {
+                root.classList.add('dark');
+            }
+        }
+
+        // Initialize default theme
+        setTheme('dark');
+
+        // Token Management
+        function getGatewayToken() {
+            const tokenInput = document.getElementById('gateway-token');
+            const token = tokenInput ? tokenInput.value.trim() : '';
+            return token || localStorage.getItem('gateway_token') || '';
+        }
+
+        function saveGatewayToken() {
+            const token = document.getElementById('gateway-token').value;
+            if (token) {
+                localStorage.setItem('gateway_token', token);
+                console.log("Token guardado en localStorage");
+                // Show feedback
+                const feedback = document.getElementById('token-save-feedback');
+                feedback.classList.remove('hidden');
+                setTimeout(() => {
+                    feedback.classList.add('hidden');
+                }, 2000);
+            }
+        }
+
+        function toggleTokenVisibility() {
+            const input = document.getElementById('gateway-token');
+            const icon = input.nextElementSibling.querySelector('i');
+            if (input.type === 'password') {
+                input.type = 'text';
+                icon.classList.remove('fa-eye');
+                icon.classList.add('fa-eye-slash');
+            } else {
+                input.type = 'password';
+                icon.classList.remove('fa-eye-slash');
+                icon.classList.add('fa-eye');
+            }
+        }
+
+        // Load token from localStorage on page load
+        window.addEventListener('load', () => {
+            const savedToken = localStorage.getItem('gateway_token');
+            if (savedToken) {
+                document.getElementById('gateway-token').value = savedToken;
+            }
+            fetch('/api/clear_chat', { 
+                method: 'POST',
+                headers: {
+                    'X-Gateway-Token': getGatewayToken()
+                }
+            }).catch(console.error);
+        });
+
+        // Skills Tab Switching
+        function switchSkillsTab(tabName) {
+            // Hide all tabs
+            document.getElementById('skills-tab-permisos').classList.add('hidden');
+            document.getElementById('skills-tab-marketplace').classList.add('hidden');
+            document.getElementById('skills-tab-heartbeat').classList.add('hidden');
+            
+            // Show selected tab
+            document.getElementById('skills-tab-' + tabName).classList.remove('hidden');
+            
+            // Update button styles
+            const buttons = document.querySelectorAll('#view-habilidades button[onclick^="switchSkillsTab"]');
+            buttons.forEach(btn => {
+                btn.classList.remove('bg-primary', 'text-white', 'font-bold');
+                btn.classList.add('bg-panelDark', 'text-gray-400');
+            });
+            
+            event.currentTarget.classList.remove('bg-panelDark', 'text-gray-400');
+            event.currentTarget.classList.add('bg-primary', 'text-white', 'font-bold');
+        }
+
+        // Sidebar Navigation Logic
+        function toggleDropdown(id) {
+            const el = document.getElementById(id);
+            if(el.classList.contains('hidden')) {
+                // Close other dropdowns first
+                document.querySelectorAll('.mobile-dropdown').forEach(d => d.classList.add('hidden'));
+                el.classList.remove('hidden');
+            } else {
+                el.classList.add('hidden');
+            }
+        }
+
+        // Close dropdowns when clicking outside
+        document.addEventListener('click', function(event) {
+            if (!event.target.closest('.chat-header-actions')) {
+                document.querySelectorAll('.mobile-dropdown').forEach(d => d.classList.add('hidden'));
+            }
+        });
+
+        function switchView(viewName) {
+            // Update sidebar active state
+            document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+
+            // Hide all views
+            document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
+
+            // Show selected view or placeholder
+            const viewElement = document.getElementById('view-' + viewName);
+            if (viewElement) {
+                viewElement.classList.add('active');
+            } else {
+                document.getElementById('view-placeholder').classList.add('active');
+            }
+            
+            // Cerrar sidebar en móvil si está abierto
+            if(window.innerWidth <= 768) {
+                toggleSidebar();
+            }
+        }
+        
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('mobile-overlay');
+            sidebar.classList.toggle('open');
+            overlay.classList.toggle('active');
+        }
+
+        // Session Timer Logic
+        let sessionSeconds = 0;
+        setInterval(() => {
+            sessionSeconds++;
+            const timeEl = document.getElementById('session-time');
+            if (timeEl) {
+                if (sessionSeconds < 60) {
+                    timeEl.innerText = `${sessionSeconds}s`;
+                } else {
+                    const mins = Math.floor(sessionSeconds / 60);
+                    const secs = sessionSeconds % 60;
+                    timeEl.innerText = `${mins}m ${secs}s`;
+                }
+            }
+        }, 1000);
+
+        // Canales Logic
+        let waInterval;
+        async function startWhatsAppAuth() {
+            const btn = document.getElementById('wa-connect-btn');
+            const qrContainer = document.getElementById('wa-qr-container');
+            const qrImg = document.getElementById('wa-qr-img');
+            const status = document.getElementById('wa-status');
+            
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Conectando al Bot...';
+            qrContainer.classList.remove('hidden');
+            
+            // Polling al backend de FastAPI que a su vez llama al Node.js
+            waInterval = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/whatsapp/qr', {
+                        headers: { 'X-Gateway-Token': getGatewayToken() }
+                    });
+                    const data = await res.json();
+                    
+                    if (data.connected) {
+                        clearInterval(waInterval);
+                        qrContainer.classList.add('hidden');
+                        btn.classList.add('hidden');
+                        status.classList.remove('hidden');
+                        status.classList.add('block');
+                    } else if (data.qr) {
+                        qrImg.src = data.qr;
+                        btn.innerHTML = 'Esperando que escanees...';
+                    } else if (data.error) {
+                        btn.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Servidor de WhatsApp apagado';
+                        qrContainer.classList.add('hidden');
+                        clearInterval(waInterval);
+                    } else {
+                        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generando QR...';
+                    }
+                } catch(e) {
+                    console.error("Error consultando QR:", e);
+                }
+            }, 2000);
+        }
+
+        async function connectTelegram() {
+            const token = document.getElementById('tg-token').value;
+            if(!token) return alert("Por favor, ingresa el token del Bot.");
+            
+            const btn = document.getElementById('tg-btn');
+            const status = document.getElementById('tg-status');
+            
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Conectando...';
+            
+            try {
+                const res = await fetch('/api/config/telegram', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-Gateway-Token': getGatewayToken()
+                    },
+                    body: JSON.stringify({ token })
+                });
+                
+                if(res.ok) {
+                    btn.classList.add('hidden');
+                    document.getElementById('tg-token').parentElement.classList.add('hidden');
+                    status.classList.remove('hidden');
+                    status.classList.add('block');
+                } else {
+                    btn.innerHTML = 'Error al conectar';
+                }
+            } catch (e) {
+                alert("Error de conexión con el servidor");
+                btn.innerHTML = 'Conectar Bot';
+            }
+        }
+
+        function toggleTaskTimeInput() {
+            const type = document.getElementById('new-task-type').value;
+            if(type === 'once' || type === 'daily') {
+                document.getElementById('task-time-container').classList.remove('hidden');
+                document.getElementById('task-minutes-container').classList.add('hidden');
+            } else {
+                document.getElementById('task-time-container').classList.add('hidden');
+                document.getElementById('task-minutes-container').classList.remove('hidden');
+            }
+        }
+
+        async function fetchTasks() {
+            try {
+                const res = await fetch('/api/tasks', {
+                    headers: { 'X-Gateway-Token': getGatewayToken() }
+                });
+                const data = await res.json();
+                const container = document.getElementById('tasks-grid');
+                
+                if(data.tasks && data.tasks.length > 0) {
+                    container.innerHTML = data.tasks.map(t => `
+                        <div class="bg-panelDark border border-borderDark rounded-xl p-5 hover:border-purple-500 transition relative overflow-hidden group">
+                            <div class="absolute top-0 right-0 w-24 h-24 bg-purple-600 rounded-full mix-blend-multiply filter blur-3xl opacity-10 group-hover:opacity-20 transition"></div>
+                            
+                            <div class="flex justify-between items-start mb-4">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-lg bg-bgDark flex items-center justify-center border border-borderDark">
+                                        <i class="fas ${t.type === 'timer' ? 'fa-hourglass-half' : 'fa-clock'} text-purple-400"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-bold text-white text-sm">${t.type === 'daily' ? 'Diario' : t.type === 'once' ? 'Una vez' : 'Temporizador'}</h3>
+                                        <p class="text-xs font-mono text-purple-300">${t.time}</p>
+                                    </div>
+                                </div>
+                                <span class="text-green-500 bg-green-500/10 border-green-500/20 text-[0.65rem] font-bold px-2 py-1 rounded-full border flex items-center gap-1 uppercase tracking-wider">
+                                    <i class="fas fa-circle text-[0.4rem]"></i> Activa
+                                </span>
+                            </div>
+                            
+                            <p class="text-sm text-gray-300 mb-4 line-clamp-3">${t.prompt}</p>
+                            
+                            <div class="mt-4 pt-4 border-t border-borderDark flex justify-between items-center">
+                                <span class="text-[0.65rem] text-gray-500">ID: ${t.id}</span>
+                                <button onclick="deleteTask('${t.id}')" class="text-xs text-red-500 hover:text-white transition"><i class="fas fa-trash"></i> Eliminar</button>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = `<div class="col-span-full text-center py-10 text-gray-500">No hay automatizaciones programadas.</div>`;
+                }
+            } catch(e) {
+                console.error("Error cargando tareas", e);
+            }
+        }
+
+        async function createTask() {
+            const prompt = document.getElementById('new-task-prompt').value;
+            const type = document.getElementById('new-task-type').value;
+            let time = "";
+            
+            if(type === 'timer') {
+                time = document.getElementById('new-task-minutes').value;
+            } else {
+                time = document.getElementById('new-task-time').value;
+            }
+            
+            if(!prompt || !time) return alert("Completa todos los campos");
+            
+            try {
+                const res = await fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-Gateway-Token': getGatewayToken()
+                    },
+                    body: JSON.stringify({ prompt, type, time })
+                });
+                if(res.ok) {
+                    document.getElementById('modal-create-task').classList.add('hidden');
+                    document.getElementById('new-task-prompt').value = "";
+                    fetchTasks();
+                }
+            } catch(e) {
+                alert("Error programando tarea");
+            }
+        }
+
+        async function deleteTask(id) {
+            if(!confirm("¿Eliminar esta tarea?")) return;
+            try {
+                await fetch(`/api/tasks/${id}`, { 
+                    method: 'DELETE',
+                    headers: { 'X-Gateway-Token': getGatewayToken() }
+                });
+                fetchTasks();
+            } catch(e) {}
+        }
+
+        // Auto-resize textarea
+        userInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+            if (this.value === '') this.style.height = 'auto';
+        });
+
+        // Submit on Enter (Shift+Enter for new line)
+        userInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                chatForm.dispatchEvent(new Event('submit'));
+            }
+        });
+
+        // Clear Chat function
+        async function clearChat() {
+            try {
+                await fetch('/api/clear_chat', { 
+                    method: 'POST',
+                    headers: {
+                        'X-Gateway-Token': getGatewayToken()
+                    }
+                });
+            } catch(e) {
+                console.error("Error limpiando memoria en backend", e);
+            }
+            chatBox.innerHTML = `
+                <div class="message-block">
+                    <div class="avatar avatar-ai">A</div>
+                    <div class="msg-content">
+                        <div class="msg-header">
+                            <span class="msg-name">Assistant</span>
+                            <span class="msg-time">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                        </div>
+                        <div class="msg-bubble text-gray-300">
+                            Nueva sesión iniciada. Memoria reiniciada. ¿En qué te puedo ayudar ahora?
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Limpiar memoria automáticamente al recargar la página
+        window.addEventListener('load', () => {
+            fetch('/api/clear_chat', { 
+                method: 'POST',
+                headers: {
+                    'X-Gateway-Token': getGatewayToken()
+                }
+            }).catch(console.error);
+        });
+
+        // Handle form submission
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = userInput.value.trim();
+            if (!message) return;
+
+            // Add User message UI
+            addUserMessage(message);
+            
+            userInput.value = '';
+            userInput.style.height = 'auto';
+
+            // Add "Working" indicator
+            const typingId = addTypingIndicator();
+
+            // Interceptar respuestas rápidas para simular que piensa, pero responder al instante
+            const fastMatches = ["hola", "estas ahi", "estas ahí", "estas ahi?", "gracias"];
+            if (fastMatches.includes(message.toLowerCase())) {
+                // Hacer una petición real pero el backend responderá en milisegundos por el Fast-Path
+                // Aún así, podemos dejar que el flujo natural ocurra, ya que el backend de FastAPI ahora tiene el fast-path
+                // que tardará literalmente 0.01 segundos en responder.
+            }
+
+            try {
+                // Verificar si hay token en el input o en localStorage
+                const tokenInput = document.getElementById('elevenlabs-token');
+                const rawToken = (tokenInput && tokenInput.value.trim() !== "") ? tokenInput.value.trim() : localStorage.getItem('elevenlabs_token');
+                const isVoiceEnabled = !!rawToken;
+                
+                const selectedVoiceId = document.getElementById('elevenlabs-voice-id') ? document.getElementById('elevenlabs-voice-id').value : "EXAVITQu4vr4xnSDxMaL";
+
+                // Llamada a la API Real, enviando el modelo y agente seleccionado
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-Gateway-Token': getGatewayToken()
+                    },
+                    body: JSON.stringify({ 
+                        message: message, 
+                        voice_enabled: isVoiceEnabled,
+                        voice_id: selectedVoiceId, // Pasamos el ID de la voz
+                        model: currentModel, // Pasamos el modelo al backend
+                        agent_id: currentAgentId, // Pasamos el agente al backend
+                        elevenlabs_token: rawToken // Pasamos el token directamente
+                    })
+                });
+                
+                const data = await response.json();
+                clearInterval(statusInterval);
+                document.getElementById(typingId).remove();
+                
+                // Reproducir voz si viene en la respuesta
+                if (data.audio) {
+                    playVoiceResponse(data.audio);
+                } else {
+                    isWaitingForAI = false;
+                    if (window.lastInputWasVoice) {
+                        // Si no hay audio pero estábamos en modo voz, reactivamos el micro
+                        if (isCallModeActive) {
+                            document.getElementById('user-input').value = ""; // Limpiar antes de reiniciar
+                            try { recognition.start(); } catch(e){}
+                        } else {
+                            toggleRecording();
+                        }
+                    }
+                }
+                
+                // Procesar respuesta: Si contiene herramientas, mostrar como Tool Block, si no, como Assistant normal.
+                if(data.response.includes("Herramienta") || data.response.includes("✅") || data.response.includes("❌") || data.response.includes("Ejecutó:")) {
+                    addToolMessage(data.response);
+                } else {
+                    addAssistantMessage(data.response);
+                }
+                
+            } catch (error) {
+                clearInterval(statusInterval);
+                document.getElementById(typingId).remove();
+                addAssistantMessage("Error de conexión con el servidor interno. Revisa la consola.");
+                isWaitingForAI = false;
+                if (window.lastInputWasVoice) {
+                    if (isCallModeActive) {
+                        try { recognition.start(); } catch(e){}
+                    } else {
+                        toggleRecording();
+                    }
+                }
+            }
+        });
+
+        function getCurrentTime() {
+            return new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        }
+
+        function addUserMessage(text) {
+            const html = `
+                <div class="message-block">
+                    <div class="avatar avatar-user">U</div>
+                    <div class="msg-content">
+                        <div class="msg-header">
+                            <span class="msg-name">User</span>
+                            <span class="msg-time">${getCurrentTime()}</span>
+                        </div>
+                        <div class="msg-bubble text-gray-200">
+                            ${text.replace(/\n/g, '<br>')}
+                        </div>
+                    </div>
+                </div>
+            `;
+            chatBox.insertAdjacentHTML('beforeend', html);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function addAssistantMessage(text) {
+            // Decodificar si hay caracteres mal formateados
+            try {
+                text = decodeURIComponent(escape(text));
+            } catch(e) {}
+            
+            // Detectar si el texto contiene un JSON crudo de herramienta y ocultarlo/transformarlo
+            let displayText = text;
+            
+            // Regex más fuerte para atrapar cualquier JSON de herramienta incluso sin markdown
+            const jsonRegex = /```(?:json)?\s*(\{[\s\S]*?"action"[\s\S]*?\})\s*```/i;
+            const fallbackJsonRegex = /(\{[\s\S]*?"action"\s*:[\s\S]*?"args"\s*:[\s\S]*?\})/i;
+            
+            let match = text.match(jsonRegex) || text.match(fallbackJsonRegex);
+            
+            if (match) {
+                try {
+                    const toolCall = JSON.parse(match[1]);
+                    if (toolCall.action) {
+                        // Si es un JSON de herramienta puro, lo ocultamos de la vista
+                        const textWithoutJson = text.replace(match[0], '').trim();
+                        if (textWithoutJson === '') {
+                            return; // No mostramos burbuja vacía
+                        }
+                        displayText = textWithoutJson;
+                    }
+                } catch(e) {}
+            }
+            
+            // Reemplazar \n literal (string) por saltos de línea reales y luego parsear a <br>
+            displayText = displayText
+                .replace(/\\n/g, '<br>')
+                .replace(/\n/g, '<br>')
+                .replace(/\\"/g, '"')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/`(.*?)`/g, '<code class="bg-bgDark px-1 rounded text-primary">$1</code>');
+                
+            const html = `
+                <div class="message-block">
+                    <div class="avatar avatar-ai shadow-[0_0_10px_rgba(59,130,246,0.3)]">A</div>
+                    <div class="msg-content">
+                        <div class="msg-header">
+                            <span class="msg-name">Automyx</span>
+                            <span class="msg-time">${getCurrentTime()}</span>
+                        </div>
+                        <div class="msg-bubble text-gray-300">
+                            ${displayText}
+                        </div>
+                    </div>
+                </div>
+            `;
+            chatBox.insertAdjacentHTML('beforeend', html);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function addToolMessage(text) {
+            try {
+                text = decodeURIComponent(escape(text));
+            } catch(e) {}
+            
+            // Clean up the text to look more professional
+            let cleanText = text.replace(/Herramienta\s\w+\sejecutada\.\sResultado:/g, '').trim();
+            // Reemplazar saltos de linea literales por reales
+            cleanText = cleanText.replace(/\\n/g, '\n').replace(/\\"/g, '"');
+            
+            const html = `
+                <div class="message-block">
+                    <div class="avatar avatar-tool shadow-[0_0_10px_rgba(249,115,22,0.3)] border border-orange-500/30 text-orange-500 bg-orange-500/10"><i class="fas fa-microchip"></i></div>
+                    <div class="msg-content">
+                        <div class="msg-header">
+                            <span class="msg-name text-orange-500 font-bold tracking-wider uppercase text-xs"><i class="fas fa-bolt mr-1"></i> Acción de Sistema</span>
+                            <span class="msg-time">${getCurrentTime()}</span>
+                        </div>
+                        <div class="msg-bubble border-orange-500/30 bg-orange-900/10">
+                            <div class="flex items-center gap-2 mb-2 border-b border-orange-500/20 pb-2">
+                                <div class="relative w-4 h-4 mr-1">
+                                  <div class="absolute inset-0 bg-blue-500 rounded-full animate-ping opacity-75"></div>
+                                  <div class="absolute inset-0 bg-blue-500 rounded-full shadow-[0_0_10px_#3b82f6]"></div>
+                                </div>
+                                <span class="text-sm font-bold text-gray-200 uppercase tracking-widest">Operación Completada</span>
+                            </div>
+                            <div class="text-sm font-mono text-gray-400 whitespace-pre-wrap mt-2 overflow-x-auto">${cleanText}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            chatBox.insertAdjacentHTML('beforeend', html);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        let statusInterval;
+
+        function addTypingIndicator() {
+            const id = 'typing-' + Date.now();
+            const html = `
+                <div id="${id}" class="message-block bubble-container">
+                    <div class="avatar avatar-ai shadow-[0_0_15px_rgba(59,130,246,0.5)]"><i class="fas fa-cog fa-spin"></i></div>
+                    <div class="msg-content w-full">
+                        <div class="msg-header">
+                            <span class="msg-name text-primary font-bold tracking-wider uppercase text-xs">Automyx Engine</span>
+                        </div>
+                        <div class="bubble-3d mt-1">
+                            <div class="flex items-center gap-3 mb-2 relative z-10">
+                                <div class="flex space-x-1">
+                                    <div class="w-2.5 h-2.5 bg-primary rounded-full animate-bounce shadow-[0_0_8px_rgba(59,130,246,0.8)]"></div>
+                                    <div class="w-2.5 h-2.5 bg-primary rounded-full animate-bounce shadow-[0_0_8px_rgba(59,130,246,0.8)]" style="animation-delay: 0.1s"></div>
+                                    <div class="w-2.5 h-2.5 bg-primary rounded-full animate-bounce shadow-[0_0_8px_rgba(59,130,246,0.8)]" style="animation-delay: 0.2s"></div>
+                                </div>
+                                <span id="${id}-action" class="text-sm text-white font-bold tracking-wide animate-pulse">Iniciando proceso autónomo...</span>
+                            </div>
+                            
+                            <div id="${id}-reasoning-container" class="hidden relative z-10 mt-4 border-t border-blue-500/30 pt-3">
+                                <div class="text-xs text-blue-400 font-mono mb-2 flex items-center uppercase tracking-widest"><i class="fas fa-network-wired mr-2"></i>Estructura Lógica y Plan:</div>
+                                <div class="timeline-container" id="${id}-timeline">
+                                    <!-- Los items se agregarán aquí dinámicamente -->
+                                </div>
+                                <div id="${id}-reasoning" class="hidden"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            chatBox.insertAdjacentHTML('beforeend', html);
+            chatBox.scrollTop = chatBox.scrollHeight;
+            
+            // Iniciar polling del estado
+            statusInterval = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/agent/status', {
+                        headers: { 'X-Gateway-Token': getGatewayToken() }
+                    });
+                    const status = await res.json();
+                    
+                    const actionEl = document.getElementById(`${id}-action`);
+                    if(actionEl && status.current_action) {
+                        actionEl.innerText = status.current_action;
+                    }
+                    
+                    const reasoningContainer = document.getElementById(`${id}-reasoning-container`);
+                    const timelineContainer = document.getElementById(`${id}-timeline`);
+                    const reasoningEl = document.getElementById(`${id}-reasoning`);
+                    
+                    if(reasoningContainer && timelineContainer && status.reasoning && status.reasoning !== reasoningEl.innerText) {
+                        reasoningContainer.classList.remove('hidden');
+                        
+                        // En lugar de un bloque de texto plano, procesamos el razonamiento 
+                        // para mostrarlo como una estructura paso a paso (timeline)
+                        const newText = status.reasoning.replace(reasoningEl.innerText, "").trim();
+                        if (newText) {
+                            // Separar por saltos de línea y crear items del timeline
+                            const lines = newText.split('\n').filter(l => l.trim().length > 0);
+                            for (const line of lines) {
+                                // Limpiar guiones o asteriscos iniciales comunes en el razonamiento
+                                const cleanLine = line.replace(/^[-*•>]\s*/, '').trim();
+                                if (cleanLine.length > 5) { // Evitar líneas muy cortas/vacías
+                                    const item = document.createElement('div');
+                                    item.className = 'timeline-item animate-fade-in-up';
+                                    item.innerHTML = cleanLine;
+                                    timelineContainer.appendChild(item);
+                                    
+                                    // Mantener solo los últimos 5 pasos visibles para que no crezca infinitamente
+                                    if (timelineContainer.children.length > 5) {
+                                        timelineContainer.removeChild(timelineContainer.firstElementChild);
+                                    }
+                                }
+                            }
+                            reasoningEl.innerText = status.reasoning;
+                            chatBox.scrollTop = chatBox.scrollHeight;
+                        }
+                    }
+                } catch(e) {}
+            }, 500);
+            
+            return id;
+        }
+
+        async function saveTelegram() {
+            const token = document.getElementById('telegram-token').value;
+            if(!token) return;
+            const res = await fetch('/api/config/telegram', {
+                method: 'POST', 
+                headers: { 
+                    'Content-Type': 'application/json', 
+                    'X-Gateway-Token': getGatewayToken() 
+                }, 
+                body: JSON.stringify({token})
+            });
+            if(res.ok) alert("Token guardado con éxito");
+        }
+
+        async function saveElevenLabs() {
+            const token = document.getElementById('elevenlabs-token').value;
+            if(!token) return;
+            const res = await fetch('/api/config/elevenlabs', {
+                method: 'POST', 
+                headers: { 
+                    'Content-Type': 'application/json', 
+                    'X-Gateway-Token': getGatewayToken() 
+                }, 
+                body: JSON.stringify({token})
+            });
+            if(res.ok) {
+                // Guardar en localStorage para que el frontend no lo olvide al recargar
+                localStorage.setItem('elevenlabs_token', token);
+                alert("API Key de ElevenLabs guardada con éxito");
+            }
+        }
+
+        // Cargar token guardado al iniciar
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedToken = localStorage.getItem('elevenlabs_token');
+            if (savedToken) {
+                const tokenInput = document.getElementById('elevenlabs-token');
+                if (tokenInput) tokenInput.value = savedToken;
+            }
+        });
+
+        // --- SISTEMA DE VOZ (RECONOCIMIENTO Y SÍNTESIS) ---
+        let recognition;
+        let isRecording = false;
+        let isCallModeActive = false; // Bandera para el modo llamada ininterrumpida
+        let silenceTimer = null; // Temporizador para forzar envío rápido
+        let isWaitingForAI = false; // Evita conflictos mientras la IA procesa o habla
+
+        if ('webkitSpeechRecognition' in window) {
+            recognition = new webkitSpeechRecognition();
+            recognition.continuous = true; 
+            recognition.interimResults = true;
+            recognition.lang = 'es-ES';
+
+            recognition.onstart = function() {
+                isRecording = true;
+                
+                // Actualizar UI
+                if (isCallModeActive) {
+                    const callBtn = document.getElementById('btn-call');
+                    callBtn.classList.add('call-active-ring');
+                    callBtn.innerHTML = '<i class="fas fa-phone-slash"></i>';
+                    document.getElementById('user-input').placeholder = "Modo Llamada: Escuchando (habla ahora)...";
+                    document.getElementById('call-overlay').classList.add('active');
+                    document.getElementById('call-status-text').innerText = "Escuchando...";
+                    document.getElementById('call-status-text').className = "text-green-500 mb-6 text-2xl font-bold tracking-widest uppercase animate-pulse";
+                    document.querySelectorAll('.wave-bar').forEach(el => el.style.animationPlayState = 'running');
+                } else {
+                    const btn = document.getElementById('btn-mic');
+                    btn.classList.add('text-red-500', 'border-red-500');
+                    btn.innerHTML = '<i class="fas fa-stop-circle"></i>';
+                    document.getElementById('user-input').placeholder = "Escuchando...";
+                }
+            };
+
+            recognition.onresult = function(event) {
+                if (isWaitingForAI) return;
+
+                let combined = "";
+                for (let i = 0; i < event.results.length; ++i) {
+                    combined += event.results[i][0].transcript;
+                }
+                document.getElementById('user-input').value = combined;
+
+                // --- DETECTOR DE SILENCIO ULTRARRÁPIDO ---
+                if (isCallModeActive) {
+                    clearTimeout(silenceTimer);
+                    silenceTimer = setTimeout(() => {
+                        const currentText = document.getElementById('user-input').value.trim();
+                        if (currentText !== '') {
+                            console.log("Silencio detectado. Enviando mensaje: ", currentText);
+                            isWaitingForAI = true;
+                            try { recognition.stop(); } catch(e){}
+                            window.lastInputWasVoice = true; 
+                            updateMicUIStopped();
+                            document.querySelector('#chat-form button[type="submit"]').click();
+                        }
+                    }, 1500); // 1.5 segundos de silencio = Enviar.
+                }
+            };
+
+            recognition.onerror = function(event) {
+                console.error("Error de reconocimiento de voz:", event.error);
+                if (event.error === 'no-speech') {
+                    if (isCallModeActive && !isWaitingForAI) {
+                        try { recognition.stop(); } catch(e){}
+                        setTimeout(() => { 
+                            if(isCallModeActive && !isRecording && !isWaitingForAI) {
+                                try { recognition.start(); } catch(e){}
+                            }
+                        }, 250);
+                    } else if (!isCallModeActive) {
+                        stopRecording();
+                    }
+                } else if (event.error === 'not-allowed') {
+                    alert("Por favor, permite el acceso al micrófono en tu navegador.");
+                    stopRecording();
+                } else {
+                    if (!isCallModeActive) stopRecording();
+                }
+            };
+
+            recognition.onend = function() {
+                isRecording = false;
+                if (isWaitingForAI) return;
+                
+                const text = document.getElementById('user-input').value.trim();
+                
+                if(text !== '') {
+                    isWaitingForAI = true;
+                    window.lastInputWasVoice = true; 
+                    updateMicUIStopped();
+                    document.querySelector('#chat-form button[type="submit"]').click();
+                } else if (isCallModeActive) {
+                    setTimeout(() => { 
+                        if(isCallModeActive && !isRecording && !isWaitingForAI) {
+                            try { recognition.start(); } catch(e){}
+                        }
+                    }, 50);
+                } else {
+                    stopRecording();
+                }
+            };
+        }
+
+        function updateMicUIStopped() {
+            if (isCallModeActive) {
+                document.getElementById('user-input').placeholder = "Modo Llamada: Automyx está pensando...";
+                document.getElementById('call-status-text').innerText = "Procesando...";
+                document.getElementById('call-status-text').className = "text-yellow-500 mb-6 text-2xl font-bold tracking-widest uppercase animate-pulse";
+                document.querySelectorAll('.wave-bar').forEach(el => el.style.animationPlayState = 'paused');
+            } else {
+                const btn = document.getElementById('btn-mic');
+                btn.classList.remove('text-red-500', 'border-red-500');
+                btn.innerHTML = '<i class="fas fa-microphone"></i>';
+                document.getElementById('user-input').placeholder = "Message (↵ to send, Shift+↵ for line breaks, paste images)";
+            }
+        }
+
+        function stopRecording() {
+            isRecording = false;
+            isCallModeActive = false; // Apagar llamada
+            
+            // Reset Mic Button
+            const btn = document.getElementById('btn-mic');
+            btn.classList.remove('text-red-500', 'border-red-500');
+            btn.innerHTML = '<i class="fas fa-microphone"></i>';
+            
+            // Reset Call Button
+            const callBtn = document.getElementById('btn-call');
+            callBtn.classList.remove('call-active-ring');
+            callBtn.innerHTML = '<i class="fas fa-phone-alt"></i>';
+            
+            document.getElementById('call-overlay').classList.remove('active');
+            document.getElementById('user-input').placeholder = "Message (↵ to send, Shift+↵ for line breaks, paste images)";
+        }
+
+        function toggleCallMode() {
+            if (!recognition) {
+                alert("Tu navegador no soporta reconocimiento de voz.");
+                return;
+            }
+            if (isCallModeActive) {
+                // Colgar llamada
+                isCallModeActive = false;
+                clearTimeout(silenceTimer);
+                try { recognition.stop(); } catch(e) {}
+                stopRecording();
+            } else {
+                // Iniciar llamada
+                isCallModeActive = true;
+                window.lastInputWasVoice = true;
+                recognition.continuous = true; // Bucle continuo para manejar latencia
+                document.getElementById('user-input').value = "";
+                try { recognition.start(); } catch(e) {}
+            }
+        }
+
+        function toggleRecording() {
+            if (!recognition) {
+                alert("Tu navegador no soporta reconocimiento de voz (Usa Chrome o Edge).");
+                return;
+            }
+            
+            if (isCallModeActive) {
+                // Si la llamada está activa, el botón de micro normal actúa como colgar
+                isCallModeActive = false;
+                clearTimeout(silenceTimer);
+                try { recognition.stop(); } catch(e) {}
+                stopRecording();
+                return;
+            }
+
+            if (isRecording) {
+                try { recognition.stop(); } catch(e) {}
+            } else {
+                window.lastInputWasVoice = true; // Forzamos a true para que responda con voz
+                recognition.continuous = false; // Modo de 1 solo mensaje
+                document.getElementById('user-input').value = ""; // limpiar antes de hablar
+                try { recognition.start(); } catch(e) {}
+            }
+        }
+
+        function playVoiceResponse(audioBase64) {
+            if(!audioBase64) {
+                // Si no hay audio pero estamos en llamada, volver a escuchar inmediatamente
+                if (isCallModeActive && !isRecording) {
+                    try { recognition.start(); } catch(e){}
+                }
+                return;
+            }
+            
+            const audio = new Audio("data:audio/mp3;base64," + audioBase64);
+            
+            if (isCallModeActive) {
+                document.getElementById('call-status-text').innerText = "Automyx Hablando...";
+                document.getElementById('call-status-text').className = "text-blue-500 mb-6 text-2xl font-bold tracking-widest uppercase";
+                document.querySelectorAll('.wave-bar').forEach(el => {
+                    el.style.backgroundColor = '#3b82f6';
+                    el.style.animationPlayState = 'running';
+                });
+            }
+            
+            audio.play();
+            
+            // Cuando la IA termine de hablar
+            audio.onended = function() {
+                isWaitingForAI = false;
+                if (isCallModeActive) {
+                    document.querySelectorAll('.wave-bar').forEach(el => {
+                        el.style.backgroundColor = '#22c55e';
+                    });
+                }
+                // Si la llamada sigue activa, reabrimos el micrófono automáticamente
+                if (isCallModeActive && !isRecording) {
+                    document.getElementById('user-input').value = "";
+                    try { recognition.start(); } catch(e){}
+                }
+            };
+        }
+
+        // --- SISTEMA DE MODELOS OLLAMA ---
+        let currentModel = "";
+
+        function selectModel(modelName) {
+            currentModel = modelName;
+            document.getElementById('current-model-display').innerText = modelName;
+            // Update UI state
+            document.querySelectorAll('.model-option').forEach(el => el.classList.remove('bg-primary', 'bg-opacity-20', 'text-primary'));
+            const activeEl = document.getElementById(`model-opt-${modelName.replace(/:/g, '-')}`);
+            if(activeEl) activeEl.classList.add('bg-primary', 'bg-opacity-20', 'text-primary');
+        }
+
+        async function fetchOllamaModels() {
+            try {
+                const res = await fetch('/api/ollama/models', {
+                    headers: { 'X-Gateway-Token': getGatewayToken() }
+                });
+                const data = await res.json();
+                
+                // Actualizar lista en vista Ollama Terminal
+                const containerOllama = document.getElementById('ollama-models-list');
+                // Actualizar dropdown en vista Chat
+                const containerDropdown = document.getElementById('model-dropdown-list');
+                // Select de Crear Agente
+                const selectEl = document.getElementById('new-agent-model');
+                
+                // Modelos en la nube por defecto (siempre disponibles)
+                const defaultCloudModels = [
+                    { name: 'minimaxai/minimax-m2.7', size: 0, details: { parameter_size: 'Nvidia API (MiniMax)' } },
+                    { name: 'openai/gpt-oss-120b', size: 0, details: { parameter_size: 'Nvidia API (Razonamiento)' } },
+                    { name: 'z-ai/glm-5.1', size: 0, details: { parameter_size: 'Nvidia API (GLM-5.1)' } }
+                ];
+
+                let allModels = [...defaultCloudModels];
+                if (data.models && data.models.length > 0) {
+                    allModels = [...allModels, ...data.models];
+                }
+
+                // Llenar vista Ollama Terminal (solo locales)
+                if (data.models && data.models.length > 0 && containerOllama) {
+                    containerOllama.innerHTML = data.models.map(m => {
+                        const realName = m.model || m.name || 'Desconocido';
+                        const sizeGB = m.size ? (m.size / 1024 / 1024 / 1024).toFixed(1) + 'GB' : 'N/A';
+                        const paramSize = (m.details && m.details.parameter_size) ? m.details.parameter_size : 'N/A';
+                        
+                        return `
+                        <div class="bg-bgDark border border-borderDark p-3 rounded-lg flex justify-between items-center hover:border-primary transition cursor-pointer group">
+                            <div class="flex items-center gap-3">
+                                <i class="fas fa-brain text-textMuted group-hover:text-primary transition"></i>
+                                <div>
+                                    <h4 class="font-bold text-gray-200 text-sm">${realName}</h4>
+                                    <p class="text-xs text-textMuted font-mono">${sizeGB} • ${paramSize}</p>
+                                </div>
+                            </div>
+                            <button onclick="selectModel('${realName}'); switchView('chat');" class="text-xs bg-primary bg-opacity-10 text-primary px-2 py-1 rounded hover:bg-opacity-20 transition">Usar</button>
+                        </div>
+                    `}).join('');
+                } else if (containerOllama) {
+                    containerOllama.innerHTML = `
+                        <div class="text-center py-4">
+                            <i class="fas fa-box-open text-3xl text-borderDark mb-2"></i>
+                            <p class="text-textMuted text-sm mb-4">No tienes modelos locales instalados.</p>
+                        </div>
+                    `;
+                }
+
+                // Llenar Dropdown del Chat (Cloud + Locales)
+                if (containerDropdown) {
+                    containerDropdown.innerHTML = allModels.map(m => {
+                        const realName = m.model || m.name || 'Desconocido';
+                        const paramSize = (m.details && m.details.parameter_size) ? m.details.parameter_size : '?';
+                        return `
+                        <div id="model-opt-${realName.replace(/:/g, '-')}" class="model-option p-2 rounded hover:bg-borderDark cursor-pointer flex justify-between items-center text-sm transition" onclick="selectModel('${realName}')">
+                            <span class="font-medium">${realName}</span>
+                            <span class="text-[0.6rem] text-textMuted bg-bgDark px-1.5 py-0.5 rounded border border-borderDark">${paramSize}</span>
+                        </div>
+                    `}).join('');
+                }
+
+                // Llenar Select de Modal Crear Agente
+                if(selectEl) {
+                    let selectHtml = "";
+                    allModels.forEach(m => {
+                        const realName = m.model || m.name || 'Desconocido';
+                        selectHtml += `<option value="${realName}">${realName}</option>`;
+                    });
+                    selectEl.innerHTML = selectHtml;
+                }
+
+                // Set default model if not set
+                if(!currentModel) {
+                    selectModel(defaultCloudModels[0].name);
+                } else {
+                    // Refrescar el UI visualmente
+                    selectModel(currentModel);
+                }
+
+            } catch (e) {
+                console.error("Error fetching models:", e);
+                // Fallback de seguridad si el backend falla
+                document.getElementById('current-model-display').innerText = "openai/gpt-oss-120b";
+                currentModel = "openai/gpt-oss-120b";
+            }
+        }
+
+        async function executeWebTerminalCmd() {
+            const input = document.getElementById('web-terminal-input');
+            const term = document.getElementById('web-terminal-output');
+            const cmd = input.value.trim();
+            if(!cmd) return;
+            
+            input.value = "";
+            term.innerHTML += `<span class="text-white">C:\\Users\\Automyx> ${cmd}</span>\n`;
+            term.scrollTop = term.scrollHeight;
+
+            try {
+                const res = await fetch('/api/terminal/run', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Gateway-Token': getGatewayToken()
+                    },
+                    body: JSON.stringify({command: cmd})
+                });
+                const data = await res.json();
+                
+                if(res.ok) {
+                    // Escape HTML for safety and proper rendering
+                    const safeOutput = data.output.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                    term.innerHTML += `<span class="text-[#cccccc]">${safeOutput}</span>\n`;
+                } else {
+                    term.innerHTML += `<span class="text-red-400">${data.error || 'Error ejecutando comando'}</span>\n`;
+                }
+            } catch(e) {
+                term.innerHTML += `<span class="text-red-400">Error de red: No se pudo conectar al servidor.</span>\n`;
+            }
+            term.innerHTML += `\nC:\\Users\\Automyx> `;
+            term.scrollTop = term.scrollHeight;
+        }
+
+        async function fetchNodos() {
+            try {
+                const res = await fetch('/api/nodos', {
+                    headers: { 'X-Gateway-Token': getGatewayToken() }
+                });
+                const data = await res.json();
+                const container = document.getElementById('nodos-grid');
+                
+                if(data.nodos && data.nodos.length > 0) {
+                    container.innerHTML = data.nodos.map(n => `
+                        <div class="bg-panelDark border border-borderDark rounded-xl p-5 hover:border-primary transition relative overflow-hidden group">
+                            <div class="absolute top-0 right-0 w-24 h-24 ${n.status === 'online' ? 'bg-green-500' : 'bg-red-500'} rounded-full mix-blend-multiply filter blur-3xl opacity-10 group-hover:opacity-20 transition"></div>
+                            
+                            <div class="flex justify-between items-start mb-4">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-lg bg-bgDark flex items-center justify-center border border-borderDark">
+                                        <i class="fas ${n.icon || 'fa-server'} text-gray-300"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-bold text-white text-sm">${n.name}</h3>
+                                        <p class="text-xs font-mono text-gray-500">${n.ip}</p>
+                                    </div>
+                                </div>
+                                <span class="${n.status === 'online' ? 'text-green-500 bg-green-500/10 border-green-500/20' : 'text-red-500 bg-red-500/10 border-red-500/20'} text-[0.65rem] font-bold px-2 py-1 rounded-full border flex items-center gap-1 uppercase tracking-wider">
+                                    <i class="fas fa-circle text-[0.4rem]"></i> ${n.status}
+                                </span>
+                            </div>
+                            
+                            <div class="space-y-3">
+                                <div>
+                                    <div class="flex justify-between text-xs mb-1">
+                                        <span class="text-gray-400">CPU Uso</span>
+                                        <span class="text-white font-mono">${n.cpu}%</span>
+                                    </div>
+                                    <div class="w-full bg-bgDark rounded-full h-1.5">
+                                        <div class="bg-blue-500 h-1.5 rounded-full" style="width: ${n.cpu}%"></div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="flex justify-between text-xs mb-1">
+                                        <span class="text-gray-400">RAM Uso</span>
+                                        <span class="text-white font-mono">${n.ram}%</span>
+                                    </div>
+                                    <div class="w-full bg-bgDark rounded-full h-1.5">
+                                        <div class="bg-purple-500 h-1.5 rounded-full" style="width: ${n.ram}%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="mt-4 pt-4 border-t border-borderDark flex justify-between items-center">
+                                <span class="text-[0.65rem] text-gray-500"><i class="fas fa-clock mr-1"></i> Uptime: ${n.uptime}</span>
+                                <button class="text-xs text-primary hover:text-white transition"><i class="fas fa-terminal"></i> Conectar</button>
+                            </div>
+                            
+                            ${n.gpu ? `
+                            <div class="mt-2 pt-2 border-t border-borderDark flex justify-between items-center text-[0.65rem] text-gray-400 font-mono">
+                                <span><i class="fas fa-microchip mr-1"></i> GPU: ${n.gpu}</span>
+                                <span class="bg-gray-800 px-1.5 py-0.5 rounded text-gray-300">Backend: ${n.backend}</span>
+                            </div>
+                            ` : ''}
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = `<div class="col-span-full text-center py-10 text-gray-500">No hay nodos conectados a la red.</div>`;
+                }
+            } catch(e) {
+                console.error("Error cargando nodos", e);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchOllamaModels();
+            fetchAgents();
+            fetchNodos();
+            fetchTasks();
+        });
+
+        // --- SISTEMA DE GESTIÓN DE AGENTES ---
+        let currentAgentId = "main";
+
+        function selectAgent(agentId, agentName, defaultModel) {
+            currentAgentId = agentId;
+            document.getElementById('current-agent-display').innerText = agentName;
+            
+            // Update UI state
+            document.querySelectorAll('.agent-option').forEach(el => el.classList.remove('bg-primary', 'bg-opacity-20', 'text-primary'));
+            const activeEl = document.getElementById(`agent-opt-${agentId}`);
+            if(activeEl) activeEl.classList.add('bg-primary', 'bg-opacity-20', 'text-primary');
+
+            // Si el agente tiene un modelo asociado, cambiar a ese modelo automáticamente
+            if(defaultModel) {
+                selectModel(defaultModel);
+            }
+        }
+
+        // --- SISTEMA DE HABILIDADES ---
+        let currentSkillAgentId = null;
+        
+        function selectSkillAgent(agentId, agentName, skills) {
+            currentSkillAgentId = agentId;
+            document.getElementById('skills-agent-name').innerText = "Configurando: " + agentName;
+            document.getElementById('skills-overlay').classList.add('hidden');
+            
+            // Actualizar UI
+            document.querySelectorAll('.skill-agent-item').forEach(el => el.classList.remove('bg-borderDark', 'border-primary'));
+            const el = document.getElementById('skill-agent-' + agentId);
+            if(el) el.classList.add('bg-borderDark', 'border-primary');
+            
+            // Cargar switches
+            const s = skills || { write: true, pc: true };
+            document.getElementById('perm-write').checked = s.write;
+            document.getElementById('perm-pc').checked = s.pc;
+        }
+
+        async function saveAgentSkills() {
+            if(!currentSkillAgentId) return;
+            
+            const btn = event.currentTarget;
+            const originalHTML = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Guardando...';
+            
+            const skills = {
+                write: document.getElementById('perm-write').checked,
+                pc: document.getElementById('perm-pc').checked
+            };
+            
+            try {
+                const res = await fetch(`/api/agents/${currentSkillAgentId}/skills`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json', 
+                        'X-Gateway-Token': getGatewayToken() 
+                    },
+                    body: JSON.stringify(skills)
+                });
+                
+                if(res.ok) {
+                    setTimeout(() => {
+                        btn.innerHTML = '<i class="fas fa-check mr-2"></i> Guardado';
+                        btn.classList.replace('bg-primary', 'bg-green-600');
+                        setTimeout(() => {
+                            btn.innerHTML = originalHTML;
+                            btn.classList.replace('bg-green-600', 'bg-primary');
+                            fetchAgents(); // Recargar para actualizar los datos en memoria
+                        }, 2000);
+                    }, 500);
+                }
+            } catch(e) {
+                alert("Error guardando habilidades.");
+                btn.innerHTML = originalHTML;
+            }
+        }
+
+        async function fetchAgents() {
+            try {
+                const res = await fetch('/api/agents', {
+                    headers: { 'X-Gateway-Token': getGatewayToken() }
+                });
+                const data = await res.json();
+                const tableBody = document.getElementById('agents-table-body');
+                const dropdownList = document.getElementById('agent-dropdown-list');
+                const skillsAgentList = document.getElementById('skills-agent-list');
+                
+                if(data.agents && data.agents.length > 0) {
+                    // Llenar tabla
+                    tableBody.innerHTML = data.agents.map(a => `
+                        <tr class="border-b border-borderDark hover:bg-bgDark transition">
+                            <td class="p-4 font-medium text-gray-200">${a.name}</td>
+                            <td class="p-4 text-textMuted text-sm"><span class="bg-gray-800 px-2 py-1 rounded text-xs border border-gray-700 font-mono">${a.model}</span></td>
+                            <td class="p-4"><span class="text-green-500 text-xs font-bold bg-green-500 bg-opacity-10 px-2 py-1 rounded-full border border-green-500 border-opacity-20"><i class="fas fa-circle mr-1 text-[0.5rem]"></i> ${a.status}</span></td>
+                            <td class="p-4 text-right">
+                                <button onclick="selectAgent('${a.id}', '${a.name}', '${a.model}'); switchView('chat');" class="text-xs bg-primary bg-opacity-10 text-primary px-2 py-1 rounded hover:bg-opacity-20 transition mr-2">Hablar</button>
+                                <button class="text-textMuted hover:text-white mx-1" title="Editar"><i class="fas fa-edit"></i></button>
+                                <button onclick="deleteAgent('${a.id}')" class="text-textMuted hover:text-red-500 mx-1" title="Eliminar"><i class="fas fa-trash"></i></button>
+                            </td>
+                        </tr>
+                    `).join('');
+
+                    // Llenar Dropdown del Chat
+                    dropdownList.innerHTML = data.agents.map(a => `
+                        <div id="agent-opt-${a.id}" class="agent-option p-2 rounded hover:bg-borderDark cursor-pointer flex justify-between items-center text-sm transition" onclick="selectAgent('${a.id}', '${a.name}', '${a.model}')">
+                            <span class="font-medium">${a.name}</span>
+                        </div>
+                    `).join('');
+
+                    // Llenar Lista de Habilidades
+                    if(skillsAgentList) {
+                        skillsAgentList.innerHTML = data.agents.map(a => {
+                            const s = a.skills || { write: true, pc: true };
+                            const icons = [];
+                            if(s.write) icons.push('<i class="fas fa-edit text-green-500" title="Escritura"></i>');
+                            if(s.pc) icons.push('<i class="fas fa-laptop-code text-red-500" title="Control PC"></i>');
+                            
+                            return `
+                            <div id="skill-agent-${a.id}" class="skill-agent-item p-3 border border-transparent rounded-lg cursor-pointer hover:bg-bgDark flex justify-between items-center transition" onclick='selectSkillAgent("${a.id}", "${a.name}", ${JSON.stringify(s)})'>
+                                <div class="flex items-center gap-3">
+                                    <i class="fas fa-robot text-gray-500"></i>
+                                    <span class="text-sm font-medium text-gray-200">${a.name}</span>
+                                </div>
+                                <div class="flex gap-2 text-xs">
+                                    ${icons.join('')}
+                                </div>
+                            </div>
+                        `}).join('');
+                    }
+
+                    // Seleccionar main por defecto si no hay nada
+                    if(currentAgentId === "main") {
+                        const mainAgent = data.agents.find(a => a.id === "main");
+                        if(mainAgent) selectAgent(mainAgent.id, mainAgent.name, null); // No forzar modelo al inicio
+                    }
+                }
+            } catch(e) {
+                console.error("Error cargando agentes", e);
+            }
+        }
+
+        async function crearAgente() {
+            const name = document.getElementById('new-agent-name').value.trim();
+            const model = document.getElementById('new-agent-model').value;
+            const prompt = document.getElementById('new-agent-prompt').value.trim();
+
+            if(!name || !model) {
+                alert("Por favor, ponle un nombre y elige un modelo.");
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/agents', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json', 
+                        'X-Gateway-Token': getGatewayToken() 
+                    },
+                    body: JSON.stringify({ name, model, prompt })
+                });
+                
+                if(res.ok) {
+                    document.getElementById('modal-crear-agente').classList.add('hidden');
+                    // Limpiar campos
+                    document.getElementById('new-agent-name').value = '';
+                    document.getElementById('new-agent-prompt').value = '';
+                    fetchAgents(); // Recargar tabla
+                }
+            } catch(e) {
+                console.error("Error creando agente", e);
+            }
+        }
+
+        async function deleteAgent(id) {
+            if(id === 'main') {
+                alert("No puedes borrar el agente principal del sistema.");
+                return;
+            }
+            if(!confirm("¿Estás seguro de que quieres eliminar este agente?")) return;
+
+            try {
+                const res = await fetch(`/api/agents/${id}`, { 
+                    method: 'DELETE',
+                    headers: { 'X-Gateway-Token': getGatewayToken() }
+                });
+                if(res.ok) fetchAgents();
+            } catch(e) {
+                console.error("Error borrando agente", e);
+            }
+        }
+
+    </script>
+</body>
+</html>

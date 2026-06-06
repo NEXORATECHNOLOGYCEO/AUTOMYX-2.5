@@ -1,0 +1,79 @@
+{
+  "version": "2.0.0",
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 3500,
+    "auth": {
+      "mode": "token",
+      "token": "HQ8cF4J7__HIxWJK37jQwQ-rPqVulLUdkEZlw3xXnq0",
+      "password": null
+    },
+    "tls": {
+      "enabled": false,
+      "cert_file": null,
+      "key_file": null
+    },
+    "health": {
+      "enabled": true,
+      "interval": 30
+    }
+  },
+  "channels": {
+    "whatsapp": {
+      "enabled": false,
+      "allow_from": [],
+      "groups": []
+    },
+    "telegram": {
+      "enabled": false,
+      "bot_token": null,
+      "allow_from": []
+    },
+    "webchat": {
+      "enabled": true
+    }
+  },
+  "agents": {
+    "default": {
+      "model": "nvidia/gpt-oss-120b",
+      "temperature": 0.7,
+      "max_tokens": 4096
+    }
+  },
+  "models": {
+    "default_provider": "nvidia",
+    "ollama": {
+      "base_url": "http://localhost:11434",
+      "models": [
+        "llama3.1:8b",
+        "llama3.1:70b",
+        "mistral:latest"
+      ]
+    },
+    "nvidia": {
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "api_key": "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",
+      "models": [
+        "nvidia/gpt-oss-120b",
+        "nvidia/llama-3.1-nemotron-70b-instruct"
+      ]
+    },
+    "openai": {
+      "base_url": "https://api.openai.com/v1",
+      "api_key": null,
+      "models": [
+        "gpt-4o",
+        "gpt-4-turbo",
+        "gpt-3.5-turbo"
+      ]
+    }
+  },
+  "sessions": {
+    "per_sender": true,
+    "max_history": 50
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "automix.log"
+  }
+}

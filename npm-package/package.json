@@ -1,0 +1,27 @@
+{
+  "name": "automyx-publish",
+  "version": "2.5.0",
+  "description": "Automyx - Professional AI automation suite with full system control, 2D/3D editing, and real-time voice capabilities",
+  "type": "module",
+  "license": "MIT",
+  "author": "NEXORA TECHNOLOGY LLC",
+  "homepage": "https://github.com/NEXORATECHNOLOGYGEO/automyx",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NEXORATECHNOLOGYGEO/automyx.git"
+  },
+  "bin": {
+    "automyx": "index.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "README.md"
+  ],
+  "keywords": [
+    "ai",
+    "automation",
+    "ollama",
+    "agent",
+    "openclaw"
+  ]
+}

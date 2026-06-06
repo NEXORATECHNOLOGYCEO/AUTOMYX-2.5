@@ -1,0 +1,269 @@
+{
+  "created_at": "2026-06-04T18:35:00.212747",
+  "interaction_count": 82,
+  "preferences": {
+    "tone": "professional",
+    "detail_level": "medium",
+    "favorite_tools": [],
+    "timezone": "UTC"
+  },
+  "skills_used": {},
+  "topics": {
+    "photo_editing": 20,
+    "coding": 14,
+    "git": 1,
+    "3d_modeling": 23
+  },
+  "recent_interactions": [
+    {
+      "timestamp": "2026-06-05T22:16:34.738375",
+      "input": "que puedes hacer [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde ",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T22:14:52.204850",
+      "input": "mano [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMEDIATAMEN",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T22:06:19.825903",
+      "input": "y podrias ponerle a esa web politica y privacidad, y añadirle tambien digamos que fue creada por aut",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T21:55:49.318050",
+      "input": "puedes crear una carpeta llamada films en mis archivos en descargas y dentro una web de peliculas bi",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T21:38:11.618491",
+      "input": "si osea esta bien, pero digamos es posible, hacerla como digamos con react y eso y node js y ejecuta",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T21:21:55.192743",
+      "input": "puedes digamos crearle un diseño muy profesional, 3D tambien a la web ponerle cosas bien profesional",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T21:17:37.058115",
+      "input": "puedes crear una carpeta llamada webstreaming en mis archivos en descargas y dentro una web de venta",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T20:52:51.557601",
+      "input": "envialo a la carpeta de descargas y abrelo en blender [INSTRUCCIÓN INTERNA URGENTE: Estás en una lla",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T20:50:09.733311",
+      "input": "donde la creaste en que carpeta [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo ",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T20:48:14.011597",
+      "input": "crea un modelo 3D en blender, sobre cuatro lobos y un super heroe que viene a rescatar 2 perritos qu",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T20:36:12.932182",
+      "input": "si pero te falto crear los archivos para la web dentro de la carpeta cinetflix que creaste se te olv",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T20:32:32.979597",
+      "input": "podrias entrar a mis archivos y en la carpeta de descargas, creame una carpeta llamada, cinetflix, y",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T20:23:21.526469",
+      "input": "puedes buscar las peliculas en los servidores de internet y añadirlos con un reproductor bonito, y h",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T20:09:59.337127",
+      "input": "pero abre esa carpeta en visual studio code, y ejecuta el servidor porfa [INSTRUCCIÓN INTERNA URGENT",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T20:06:57.302251",
+      "input": "ok [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMEDIATAMENTE",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T20:01:31.645097",
+      "input": "podrias entrar a mis archivos y en la carpeta de descargas, creame una carpeta llamada, cinetflix, y",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T19:33:11.209637",
+      "input": "podrias entrar a mis archivos y en la carpeta de descargas, creame una carpeta llamada, cinetflix, y",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T19:04:04.524175",
+      "input": "Crea un video 3D profesional en Blender de un niño nadando a una isla, y que aparezcan dos lobos [IN",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T18:59:56.671232",
+      "input": "no importa osea crealo en archivos [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiem",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T18:59:42.449691",
+      "input": "Crea un video 3D profesional en Blender de un niño nadando a una isla, y que aparezcan dos lobos [IN",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T18:59:32.036592",
+      "input": "okay pero hazlo [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde I",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T18:59:14.793720",
+      "input": "Crea un video 3D profesional en Blender de un niño nadando a una isla, y que aparezcan dos lobos [IN",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T18:56:11.473535",
+      "input": "Crea un video 3D profesional en Blender de un niño nadando a una isla, y que aparezcan dos lobos\" \"A",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T18:55:41.748844",
+      "input": "crealo [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMEDIATAM",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T18:55:27.092701",
+      "input": "\"Crea un video 3D profesional en Blender de un niño nadando a una isla, y que aparezcan dos lobos\" \"",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T13:54:23.213069",
+      "input": "aun se ve todo en blanco, no se ven los carros nada porq? [INSTRUCCIÓN INTERNA URGENTE: Estás en una",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T13:52:50.286152",
+      "input": "siii arboles si le añadiste y eso, pero digamos porque no se ve como la skin, añadele a todo color v",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T13:51:17.654995",
+      "input": "pero no has añadido el carro ni nada en ese? osea añadele todo lo que quiero pero de verdad [INSTRUC",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T13:49:52.962562",
+      "input": "pero añadele digamos brazos piernas, osea añadele de todo lo posible que se le pueda añadir porfa, a",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T13:48:05.519747",
+      "input": "creame un diseño 3D de un niño en una isla bien profesional en blender, y ponle textura color, en es",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T13:42:00.358295",
+      "input": "creame un video 3D osea en blender profesional, de una pelicula pequeña, como digamos un niño, llega",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T13:35:39.947330",
+      "input": "creame un video 3D osea en blender profesional, de una pelicula pequeña, como digamos un niño, llega",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T13:30:21.937354",
+      "input": "creame un video 3D osea en blender profesional, de una pelicula pequeña, como digamos un niño, llega",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T13:26:38.712268",
+      "input": "creame un video 3D osea en blender profesional, de una pelicula pequeña, como digamos un niño, llega",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T13:19:53.985892",
+      "input": "quiero es uno como en una isla en 3D pero no video basico algo avanzado",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T13:16:17.414461",
+      "input": "creame un video en 3D, osea creado en blender de cero de blender profesional, y guardalo en mis arch",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T13:12:54.948768",
+      "input": "creame un video en 3D de blender profesional, y guardalo en mis archivos en descargas, sobre digamos",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T13:05:39.789911",
+      "input": "puedes entrar a blender y crearme un diseño 3D profesional de una isla y puedes póner a spiderman, e",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T10:59:51.068983",
+      "input": "puedes entrar a mi tik tok del ordenador y colocar la cancion de let me slowly y reproducir el video",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T10:58:44.788886",
+      "input": "que puedes hacer? [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T10:55:23.890287",
+      "input": "hola [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMEDIATAMEN",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T10:43:51.010149",
+      "input": "que mas",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T10:43:45.434932",
+      "input": "hola",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T00:11:16.169417",
+      "input": "cuando lo intento abrir me dice: No podemos abrir este archivo\nHubo un problema. [INSTRUCCIÓN INTERN",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T00:09:32.071660",
+      "input": "entra mis archivos en la carpeta de descargas y crea un pdf, sobre que es automyx la ia de nexora te",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T00:05:37.624330",
+      "input": "creame un pdf en mis archivos del ordenador, hablando sobre automyx tipo creando una licencia mit, p",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-04T23:58:58.815681",
+      "input": "creame un pdf en mis archivos del ordenador, hablando sobre automyx tipo creando una licencia mit, p",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-04T23:57:00.945224",
+      "input": "crealo de nuevo pero profesional, añadele contenido y ponlo en la carpeta de descargas [INSTRUCCIÓN ",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-04T23:55:53.658440",
+      "input": "dice que huboi un problema al abrir el archivo [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-04T23:53:54.275497",
+      "input": "creame un pdf en mis archivos del ordenador, hablando sobre automyx tipo creando una licencia mit, p",
+      "tools": []
+    }
+  ]
+}
