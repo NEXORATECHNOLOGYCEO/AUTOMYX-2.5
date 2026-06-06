@@ -10,11 +10,11 @@
 ## 🚀 ¿Qué es Automyx?
 **Automyx** no es un simple chatbot. Es un **Motor de Inteligencia Artificial Autónomo (Agentic AI)** diseñado para operar directamente sobre tu sistema operativo. A diferencia de soluciones basadas exclusivamente en la nube, Automyx se ejecuta como un *Gateway* local que conecta Modelos de Lenguaje de Gran Escala (LLMs) con herramientas reales de tu computadora.
 
-### ⚡ Compitiendo en las Grandes Ligas
-Automyx ha sido reescrito desde cero con una arquitectura modular y agresiva para competir directamente con los gigantes de la automatización autónoma:
-- **vs OpenClaw & HumanClaw:** Automyx supera sus capacidades de interacción con la UI gracias a su módulo de *Universal App Control* y un razonamiento de latencia nula (Streaming Nativo).
-- **vs Hermes:** Incorporamos un sistema de *AUMFORMBRING* (Auto-aprendizaje y memoria perpetua) que permite al agente recordar y evolucionar sin intervención manual, superando el contexto estático de Hermes.
-- **vs NemoClaw:** Automyx está **hiper-optimizado para PCs de bajos recursos**. No necesitas una granja de GPUs para tener un desarrollador, editor de video y hacker ético autónomo trabajando en tu computadora. Su núcleo ligero delega la carga pesada eficientemente.
+### ⚡ La Evolución Definitiva: Automyx vs OpenClaw & Hermes
+Automyx ha sido reescrito desde cero con una arquitectura modular y agresiva para aplastar a los gigantes de la automatización autónoma:
+- **Superioridad sobre OpenClaw & HumanClaw:** OpenClaw depende de recursos pesados y su interacción con la interfaz gráfica (UI) es limitada. Automyx lo supera al incorporar un módulo de *Universal App Control* nativo, capaz de controlar aplicaciones de escritorio complejas (Blender, CapCut, VS Code) mediante macros e inyección de código, sumado a un razonamiento de latencia nula (Streaming Nativo).
+- **Más allá de Hermes:** Mientras Hermes se basa en un contexto estático, Automyx incorpora el sistema *AUMFORMBRING* (Auto-aprendizaje y memoria perpetua), permitiendo al agente recordar, adaptar su comportamiento y crear sus propias habilidades (skills) sobre la marcha sin intervención del desarrollador.
+- **La Ventaja Definitiva - Optimización Extrema:** A diferencia de NemoClaw u OpenClaw, Automyx está **hiper-optimizado para PCs de bajos recursos**. No necesitas una granja de GPUs de $10,000 USD. Su motor de enrutamiento dinámico delega la inferencia pesada a APIs de latencia ultra-baja (NVIDIA) o a modelos locales cuantizados, permitiendo que un laptop antiguo actúe como un desarrollador Senior, editor de video y hacker ético.
 
 ## 🛠️ Capacidades Élite (100+ Herramientas)
 Automyx actúa como un equipo completo de profesionales:
@@ -46,10 +46,11 @@ Automyx no solo es potente en su backend, sino que cuenta con un **Dashboard de 
 
 Automyx ha sido diseñado desde su núcleo para ser **extremadamente eficiente y versátil**. A diferencia de otros agentes que requieren configuraciones de hardware exorbitantes (como GPUs dedicadas de gama alta o procesadores de última generación), Automyx cuenta con un motor ligero que puede ejecutarse prácticamente en cualquier dispositivo:
 
-- **Hardware de Bajos Recursos:** Optimizado para funcionar de manera fluida en PCs antiguos o laptops con memoria RAM limitada. La carga pesada se enruta de forma inteligente para no asfixiar el procesador local.
-- **Ecosistema de Escritorio:** Soporte total para **Windows (10/11)**, distribuciones de **Linux** y **macOS** (incluyendo Mac Mini y arquitecturas Apple Silicon).
-- **Micro-ordenadores:** Soporte completo para **Raspberry Pi**, permitiéndote crear un clúster autónomo de IA de bajo costo 24/7 en tu propia casa.
-- **Movilidad Total (Smartphones):** Sorprendentemente, el core de Automyx es capaz de ejecutarse directamente desde tu celular utilizando **Termux**. Puedes llevar todo el poder de este agente omnipotente literalmente en tu bolsillo.
+- **Hardware de Bajos Recursos:** Optimizado para funcionar de manera fluida en PCs antiguos o laptops con 4GB/8GB de memoria RAM. La carga pesada se enruta a través de la nube, mientras el control local consume menos del 2% del CPU.
+- **Servidores VPS (Hostinger, AWS, DigitalOcean):** Automyx funciona a la perfección en modo "Headless" dentro de Servidores Privados Virtuales. Puedes tener a tu agente farmeando datos, haciendo trading o gestionando redes sociales 24/7 en la nube con sistemas operativos Ubuntu o Debian.
+- **Ecosistema Apple (macOS):** Soporte nativo para MacBooks y Mac Mini, aprovechando la arquitectura Apple Silicon (M1/M2/M3) cuando se usan modelos locales.
+- **Micro-ordenadores:** Soporte completo para **Raspberry Pi**, permitiéndote crear un clúster autónomo de IA de bajo costo y bajo consumo energético en tu propia casa.
+- **Movilidad Total (Smartphones Android):** Sorprendentemente, el core de Automyx es capaz de ejecutarse directamente desde tu celular utilizando **Termux**. Puedes llevar todo el poder de este agente omnipotente literalmente en tu bolsillo y controlarlo vía Web.
 
 ---
 
@@ -79,8 +80,19 @@ Poner a funcionar Automyx es un proceso directo. Asegúrate de tener Python 3.10
 
 ---
 
-## 🏢 Sobre Nexora Technology LLC
-Este proyecto es impulsado por la visión de **Nexora Technology LLC**, bajo el liderazgo y desarrollo de **Juan Kappler**. Nuestro objetivo es democratizar la Inteligencia Artificial de grado militar/corporativo, permitiendo que cualquier individuo con hardware limitado pueda tener un agente omnipotente a su servicio.
+## 🧠 Modelos Locales y Ollama (Offline Mode)
+Aunque Automyx puede usar APIs ultra-rápidas (Nvidia/OpenAI/MiniMax), también **soporta modelos locales al 100%** para privacidad absoluta sin necesidad de internet:
+1. Asegúrate de tener instalado [Ollama](https://ollama.com).
+2. En la terminal de Automyx, descarga un modelo compatible: `automix ollama pull llama3` o `automix ollama pull mistral`.
+3. Inicia Automyx apuntando al modelo local: `automix ollama launch --model llama3 --location local`.
+
+---
+
+## 🏢 Sobre Nexora Technology LLC y Colaboradores
+Este proyecto es impulsado por la visión corporativa de **Nexora Technology LLC**, bajo el liderazgo y desarrollo arquitectónico de **Juan Kappler**. Nuestro objetivo es democratizar la Inteligencia Artificial de grado militar, permitiendo que cualquier individuo u organización pueda tener un agente omnipotente a su servicio.
+
+**Equipo y Creadores:**
+- **Juan Kappler:** CEO de Nexora Technology LLC, Lead Architect & Creador Principal.
 
 ---
 *© 2026 Nexora Technology LLC. Todos los derechos reservados.*
