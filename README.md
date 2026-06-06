@@ -1,6 +1,6 @@
 <div align="center">
   <img src="assets/logo.png" alt="Automyx Logo" width="150"/>
-  <h1>AUTOMYX CORE 2.5</h1>
+  <h1>AUTOMYX 2.5</h1>
   <p><strong>La Inteligencia Artificial autónoma más potente, optimizada para PCs de bajos recursos.</strong></p>
   <p>Desarrollado por <strong>Juan Kappler</strong> | Propiedad de <strong>Nexora Technology LLC</strong></p>
 </div>
