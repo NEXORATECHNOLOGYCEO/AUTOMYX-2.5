@@ -42,6 +42,43 @@ Automyx no solo es potente en su backend, sino que cuenta con un **Dashboard de 
 
 ---
 
+## 🌍 Arquitectura Multiplataforma y Bajo Consumo
+
+Automyx ha sido diseñado desde su núcleo para ser **extremadamente eficiente y versátil**. A diferencia de otros agentes que requieren configuraciones de hardware exorbitantes (como GPUs dedicadas de gama alta o procesadores de última generación), Automyx cuenta con un motor ligero que puede ejecutarse prácticamente en cualquier dispositivo:
+
+- **Hardware de Bajos Recursos:** Optimizado para funcionar de manera fluida en PCs antiguos o laptops con memoria RAM limitada. La carga pesada se enruta de forma inteligente para no asfixiar el procesador local.
+- **Ecosistema de Escritorio:** Soporte total para **Windows (10/11)**, distribuciones de **Linux** y **macOS** (incluyendo Mac Mini y arquitecturas Apple Silicon).
+- **Micro-ordenadores:** Soporte completo para **Raspberry Pi**, permitiéndote crear un clúster autónomo de IA de bajo costo 24/7 en tu propia casa.
+- **Movilidad Total (Smartphones):** Sorprendentemente, el core de Automyx es capaz de ejecutarse directamente desde tu celular utilizando **Termux**. Puedes llevar todo el poder de este agente omnipotente literalmente en tu bolsillo.
+
+---
+
+## ⚙️ Instalación y Despliegue Rápido
+
+Poner a funcionar Automyx es un proceso directo. Asegúrate de tener Python 3.10+ instalado.
+
+1. **Clona el repositorio:**
+   ```bash
+   git clone https://github.com/NEXORATECHNOLOGYCEO/AUTOMYX-2.5.git
+   cd AUTOMYX-2.5
+   ```
+
+2. **Instala las dependencias:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Inicia el Motor y el Gateway (Servidor):**
+   ```bash
+   python api/main.py
+   ```
+   *(También puedes usar el CLI integrado: `python automix.py gateway`)*
+
+4. **Accede al Dashboard:**
+   Una vez iniciado, abre tu navegador y entra a `http://localhost:3500`. La terminal te generará y mostrará el **Token de seguridad único** necesario para ingresar y controlar a la IA.
+
+---
+
 ## 🏢 Sobre Nexora Technology LLC
 Este proyecto es impulsado por la visión de **Nexora Technology LLC**, bajo el liderazgo y desarrollo de **Juan Kappler**. Nuestro objetivo es democratizar la Inteligencia Artificial de grado militar/corporativo, permitiendo que cualquier individuo con hardware limitado pueda tener un agente omnipotente a su servicio.
 
