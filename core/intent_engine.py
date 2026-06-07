@@ -14,6 +14,7 @@ import os
 import re
 import json
 import unicodedata
+import requests
 from difflib import get_close_matches, SequenceMatcher
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -543,10 +544,24 @@ INTENT_KEYWORDS: Dict[str, List[str]] = {
         "qué onda", "buenas", "buenos días", "buenas tardes", "buenas noches",
         "hi", "hello", "hey", "qué hubo", "que tal", "que onda", "saludos",
         "buen dia", "buenos dias",
+        # Coloquialismos latinos / calle
+        "ey", "oe", "oiga", "oiga usted", "vea", "ve",
+        "ey mano", "oe mano", "mano", "parcero", "parce", "brother", "bro",
+        "gonorrea", "no seas gonorrea", "no joda", "ñero", "ñera", "loco",
+        "tío", "tia", "tio", "tia", "primo", "prima", "amigo", "amiga",
+        "ps", "pss", "pues", "a ver", "ver", "mira", "fíjate", "mire",
+        "qué más", "que mas", "qué más pues", "qué hubo", "qué hube",
+        "cómo te va", "como te va", "cómo vamos", "como vamos",
+        "todo bien", "cómo vas", "que tal todo", "qué tal todo",
+        "hi there", "hey there", "yo", "aló", "aló?", "buenas buenas",
     ],
     "help": [
         "ayuda", "ayúdame", "necesito ayuda", "qué puedes hacer", "qué sabes hacer",
         "para qué sirves", "help", "qué haces", "explicame", "explícame",
+        "qué funciones tienes", "muéstrame qué puedes hacer", "enséñame",
+        "que puedes hacer", "que sabes hacer", "para que sirves", "que haces",
+        "muéstrame qué hacer", "mostrame que hacer", "a ver qué haces",
+        "mira qué haces", "muestrame", "mostrame", "enséñame a usar",
     ],
     "thanks": [
         "gracias", "muchas gracias", "te lo agradezco", "mil gracias",
@@ -555,6 +570,47 @@ INTENT_KEYWORDS: Dict[str, List[str]] = {
     "farewell": [
         "adiós", "chao", "chau", "hasta luego", "nos vemos", "bye",
         "hasta pronto", "me voy", "cuídate",
+    ],
+    # Configuración de integraciones / canales
+    "setup_integration": [
+        # Español
+        "configurar notion", "configura notion", "conectar notion", "conecta notion",
+        "vincular notion", "vincula notion", "activar notion", "activa notion",
+        "agregar notion", "añadir notion", "anadir notion",
+        "poner mi token de notion", "guardar mi token de notion", "mi api key de notion",
+        "configurar github", "configura github", "conectar github", "conecta github",
+        "vincular github", "activar github", "mi token de github",
+        "configurar telegram", "configura telegram", "conectar telegram",
+        "vincular telegram", "activar telegram", "mi bot de telegram",
+        "configurar discord", "configura discord", "conectar discord",
+        "vincular discord", "activar discord", "mi bot de discord",
+        "configurar instagram", "configura instagram", "conectar instagram",
+        "vincular instagram", "activar instagram",
+        "configurar openai", "configurar anthropic", "configurar elevenlabs",
+        "configurar tavily", "configurar gemini",
+        "configurar integracion", "configurar integración", "configurar canal",
+        "agregar integracion", "agregar integración", "agregar canal",
+        "set up notion", "setup notion", "connect notion", "add notion",
+        "set up github", "setup github", "connect github", "add github",
+        "set up telegram", "setup telegram", "connect telegram",
+        "set up discord", "setup discord", "connect discord",
+        "link notion", "link github", "link telegram", "link discord",
+        "i want to use notion", "i need to set up notion", "let's configure notion",
+        "let's connect notion", "help me set up notion", "ayuda a configurar notion",
+        "no tengo notion configurado", "quiero usar notion", "quiero conectar notion",
+        "agrega notion", "registra notion", "setup integration", "setup channel",
+        "add channel", "add integration",
+        # Rotar / validar
+        "rotar notion", "rotar github", "rotar telegram", "rotar discord",
+        "rotar instagram", "rotar openai", "rotar anthropic", "rotar elevenlabs",
+        "rotar tavily", "rotar gemini", "rotar groq", "rotar mistral",
+        "validar notion", "validar github", "validar telegram", "validar discord",
+        "validar instagram", "validar openai", "validar anthropic", "validar elevenlabs",
+        "validar tavily", "validar gemini", "validar groq", "validar mistral",
+        "rotate notion", "rotate github", "rotate telegram", "rotate discord",
+        "validate notion", "validate github", "validate telegram", "validate discord",
+        "cambiar token de notion", "cambiar token de github", "cambiar mi token",
+        "actualizar token", "refrescar token", "renew notion", "renew github",
     ],
     # Código
     "run_code": [
@@ -855,6 +911,27 @@ def _text_contains(text: str, kw: str) -> bool:
     return matches >= len(kw_stems)
 
 
+def _stem_match(a: str, b: str) -> bool:
+    """True if two single-word strings share a strong stem relation.
+
+    Used as a fallback when exact substring fails — e.g. "ayudar" vs "ayuda"
+    (the stemmer drops the trailing -r, so both should match the help intent).
+    """
+    aw = re.findall(r"\w+", a.lower())
+    bw = re.findall(r"\w+", b.lower())
+    if not aw or not bw:
+        return False
+    a1, b1 = aw[0], bw[0]
+    if len(a1) < 4 or len(b1) < 4:
+        return False
+    if a1 == b1:
+        return True
+    # 88% similarity is enough for stem-level match
+    if SequenceMatcher(None, a1, b1).ratio() >= 0.88:
+        return True
+    return False
+
+
 def detect_intent(text: str) -> Dict[str, Any]:
     """
     Detecta el intent del usuario.
@@ -878,11 +955,39 @@ def detect_intent(text: str) -> Dict[str, Any]:
             kw_lower = kw.lower().strip()
             if not kw_lower:
                 continue
-            if not (_text_contains(norm, kw_lower) or _text_contains(text, kw_lower)):
+            # Three match tiers (strong → weak):
+            # 1. Exact substring (strong)
+            # 2. Normalized-stem match (weak, only for single words)
+            # The weak match only counts if no strong match wins, preventing
+            # "ayuda" from incorrectly matching "ayuda a configurar notion".
+            is_strong = _text_contains(norm, kw_lower) or _text_contains(text, kw_lower)
+            is_weak = False
+            if not is_strong:
+                kw_norm = normalize_text(kw)
+                if (
+                    _text_contains(norm, kw_norm)
+                    or _text_contains(kw_norm, norm)
+                    or _stem_match(norm, kw_lower)
+                    or _stem_match(kw_norm, norm_lower)
+                ):
+                    is_weak = True
+            if not (is_strong or is_weak):
                 continue
             # Score: preferir keywords más largas y multi-palabra
             kw_len = len(kw_lower.split())
-            score = (len(kw_lower) / 20.0) + (kw_len * 0.15)
+            base_score = (len(kw_lower) / 20.0) + (kw_len * 0.15)
+            # Weak (stem) matches get a strong penalty. Specifically, if the
+            # keyword is much longer than the user's input (i.e. the user typed
+            # a subset of a multi-word keyword), we discard the match entirely
+            # — this prevents "ayuda" from being mis-classified as
+            # "ayuda a configurar notion" via stem match.
+            if is_weak:
+                input_word_count = len(re.findall(r"\w+", norm))
+                if len(kw_lower.split()) > input_word_count:
+                    continue  # keyword is longer than input — not a real match
+                score = base_score * 0.5
+            else:
+                score = base_score
             if score > best_score:
                 best_score = score
                 best_intent = intent
@@ -1435,3 +1540,157 @@ if __name__ == "__main__":
         result = understand(t)
         print("─" * 60)
         print(result["interpretation"])
+
+
+# ---------------------------------------------------------------------------
+# Integration / channel target detection
+# ---------------------------------------------------------------------------
+# Maps user-friendly names → canonical integration ID + the env var that
+# holds the token + the URL where the user can obtain it.
+INTEGRATION_REGISTRY: Dict[str, Dict[str, str]] = {
+    "notion":     {"id": "notion",     "name": "Notion",     "icon": "📚",
+                   "env_var": "NOTION_API_KEY",
+                   "help_url": "https://www.notion.so/my-integrations",
+                   "validate": "https://api.notion.com/v1/users/me",
+                   "format_hint": "Internal Integration Secret (ntn_... or secret_...)"},
+    "github":     {"id": "github",     "name": "GitHub",     "icon": "🐙",
+                   "env_var": "GITHUB_TOKEN",
+                   "help_url": "https://github.com/settings/tokens",
+                   "validate": "https://api.github.com/user",
+                   "format_hint": "Personal Access Token (ghp_...)"},
+    "telegram":   {"id": "telegram",   "name": "Telegram",   "icon": "✈️",
+                   "env_var": "TELEGRAM_BOT_TOKEN",
+                   "help_url": "https://t.me/BotFather",
+                   "validate": "https://api.telegram.org/bot{TOKEN}/getMe",
+                   "format_hint": "Bot Token de @BotFather (123456789:ABCdef...)"},
+    "discord":    {"id": "discord",    "name": "Discord",    "icon": "💬",
+                   "env_var": "DISCORD_BOT_TOKEN",
+                   "help_url": "https://discord.com/developers/applications",
+                   "validate": None,
+                   "format_hint": "Bot Token del portal de Discord"},
+    "instagram":  {"id": "instagram",  "name": "Instagram",  "icon": "📷",
+                   "env_var": "INSTAGRAM_ACCESS_TOKEN",
+                   "help_url": "https://developers.facebook.com/apps",
+                   "validate": None,
+                   "format_hint": "Page Access Token de Meta Graph API"},
+    "whatsapp":   {"id": "whatsapp",   "name": "WhatsApp",   "icon": "🟢",
+                   "env_var": None,
+                   "help_url": "https://web.whatsapp.com",
+                   "validate": None,
+                   "format_hint": "Escanea QR con tu teléfono"},
+    "openai":     {"id": "openai",     "name": "OpenAI",     "icon": "🅞",
+                   "env_var": "OPENAI_API_KEY",
+                   "help_url": "https://platform.openai.com/api-keys",
+                   "validate": "https://api.openai.com/v1/models",
+                   "format_hint": "API Key (sk-...)"},
+    "anthropic":  {"id": "anthropic",  "name": "Anthropic",  "icon": "🅐",
+                   "env_var": "ANTHROPIC_API_KEY",
+                   "help_url": "https://console.anthropic.com/settings/keys",
+                   "validate": None,
+                   "format_hint": "API Key (sk-ant-...)"},
+    "elevenlabs": {"id": "elevenlabs", "name": "ElevenLabs", "icon": "🗣️",
+                   "env_var": "ELEVENLABS_API_KEY",
+                   "help_url": "https://elevenlabs.io/app/settings/api-keys",
+                   "validate": None,
+                   "format_hint": "API Key de ElevenLabs"},
+    "tavily":     {"id": "tavily",     "name": "Tavily",     "icon": "🔍",
+                   "env_var": "TAVILY_API_KEY",
+                   "help_url": "https://tavily.com",
+                   "validate": None,
+                   "format_hint": "API Key de Tavily"},
+    "gemini":     {"id": "gemini",     "name": "Google Gemini", "icon": "🅖",
+                   "env_var": "GEMINI_API_KEY",
+                   "help_url": "https://aistudio.google.com/app/apikey",
+                   "validate": None,
+                   "format_hint": "API Key de Google AI Studio"},
+    "groq":       {"id": "groq",       "name": "Groq",       "icon": "🅖",
+                   "env_var": "GROQ_API_KEY",
+                   "help_url": "https://console.groq.com/keys",
+                   "validate": None,
+                   "format_hint": "API Key de Groq"},
+    "mistral":    {"id": "mistral",    "name": "Mistral",    "icon": "🅜",
+                   "env_var": "MISTRAL_API_KEY",
+                   "help_url": "https://console.mistral.ai/",
+                   "validate": None,
+                   "format_hint": "API Key de Mistral"},
+}
+
+# Aliases para que la detección de objetivo sea tolerante a jerga/typos
+INTEGRATION_ALIASES: Dict[str, str] = {
+    "notion": "notion", "notion app": "notion", "notionapi": "notion",
+    "github": "github", "git": "github", "git hub": "github", "github api": "github",
+    "telegram": "telegram", "tele": "telegram", "tg": "telegram", "telegram bot": "telegram",
+    "discord": "discord", "ds": "discord", "discord bot": "discord",
+    "instagram": "instagram", "ig": "instagram", "insta": "instagram", "instagram dm": "instagram",
+    "whatsapp": "whatsapp", "wa": "whatsapp", "wpp": "whatsapp", "whats app": "whatsapp",
+    "openai": "openai", "gpt": "openai", "chatgpt": "openai",
+    "anthropic": "anthropic", "claude": "anthropic",
+    "elevenlabs": "elevenlabs", "eleven labs": "elevenlabs", "eleven": "elevenlabs", "tts": "elevenlabs",
+    "tavily": "tavily", "search": "tavily", "web search": "tavily",
+    "gemini": "gemini", "google": "gemini", "bard": "gemini",
+    "groq": "groq",
+    "mistral": "mistral", "mixtral": "mistral",
+}
+
+
+def extract_integration_target(text: str) -> Optional[str]:
+    """Detect which integration the user wants to configure in a setup_integration
+    request. Returns the canonical ID (e.g. 'notion') or None.
+
+    Uses a token-search through INTEGRATION_ALIASES, longest-match first.
+    """
+    if not text:
+        return None
+    text_lower = text.lower()
+    # Sort by length desc so 'eleven labs' wins over 'eleven'
+    for alias in sorted(INTEGRATION_ALIASES.keys(), key=len, reverse=True):
+        if alias in text_lower:
+            return INTEGRATION_ALIASES[alias]
+    return None
+
+
+def validate_integration_token(integration_id: str, token: str) -> Dict[str, Any]:
+    """Best-effort live validation of an API token. Returns:
+        {"ok": bool, "detail": str, "user_info": Optional[dict]}
+    """
+    info = INTEGRATION_REGISTRY.get(integration_id)
+    if not info or not info.get("validate"):
+        # No validator available — return ok=True (format-check only)
+        return {"ok": True, "detail": "no live validator; format check only"}
+
+    url = info["validate"]
+    try:
+        if integration_id == "notion":
+            r = requests.get(
+                "https://api.notion.com/v1/users/me",
+                headers={"Authorization": f"Bearer {token}",
+                         "Notion-Version": "2022-06-28"},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                bot = r.json().get("bot", {}) or r.json()
+                return {"ok": True, "detail": f"connected as '{bot.get('name', '?')}' ({bot.get('id', '?')[:8]}…)",
+                        "user_info": bot}
+            return {"ok": False, "detail": f"HTTP {r.status_code}: {r.text[:200]}"}
+        if integration_id == "github":
+            r = requests.get(
+                "https://api.github.com/user",
+                headers={"Authorization": f"token {token}"},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                u = r.json()
+                return {"ok": True, "detail": f"connected as '{u.get('login', '?')}'", "user_info": u}
+            return {"ok": False, "detail": f"HTTP {r.status_code}: {r.text[:200]}"}
+        if integration_id == "openai":
+            r = requests.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                return {"ok": True, "detail": f"OpenAI OK · {len(r.json().get('data', []))} models available"}
+            return {"ok": False, "detail": f"HTTP {r.status_code}: {r.text[:200]}"}
+    except Exception as e:
+        return {"ok": False, "detail": f"validation error: {e}"}
+    return {"ok": True, "detail": "no validator; format check only"}

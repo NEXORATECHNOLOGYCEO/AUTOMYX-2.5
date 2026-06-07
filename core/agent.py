@@ -441,6 +441,131 @@ class AutomyxAgent:
             pass
         return None
 
+    def _guided_setup(self, integration_id: str, understanding: dict = None) -> str:
+        """Guided setup flow for an integration. Returns a user-facing message
+        that asks for the token, validates it, and saves it to .env.
+
+        This is designed to work identically from terminal, Telegram, Discord,
+        Instagram, and the web frontend. The next user message that looks like
+        a token is auto-detected and applied to the pending integration.
+        """
+        from core.intent_engine import INTEGRATION_REGISTRY, validate_integration_token
+        info = INTEGRATION_REGISTRY.get(integration_id)
+        if not info:
+            return f"❌ Integración desconocida: {integration_id}"
+
+        # Persist the pending integration so the next turn can pick it up
+        try:
+            from pathlib import Path
+            import json
+            state_path = Path("state") / "pending_setup.json"
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(
+                json.dumps({"integration_id": integration_id, "started_at": time.time()}, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+        name = info["name"]
+        icon = info["icon"]
+        env_var = info["env_var"] or "(no requiere token)"
+        help_url = info["help_url"]
+        hint = info["format_hint"]
+
+        # If env var is already set, confirm and offer to test/rotate
+        existing = os.environ.get(env_var) if env_var and env_var != "(no requiere token)" else None
+        if existing:
+            return (
+                f"{icon} **{name}** ya está configurado.\n\n"
+                f"Variable de entorno: `{env_var}`\n"
+                f"Estado: ✅ token presente\n\n"
+                f"Para rotar el token, di **'rotar {integration_id}'**.\n"
+                f"Para validar de nuevo, di **'validar {integration_id}'**."
+            )
+
+        return (
+            f"{icon} **Configurar {name}**\n\n"
+            f"Para vincular tu cuenta, necesito tu **{hint}**.\n\n"
+            f"🔗 Dónde obtenerlo: {help_url}\n\n"
+            f"Pégalo aquí en tu próximo mensaje. Lo guardaré cifrado en `.env` "
+            f"bajo la variable `{env_var}` y validaré que funcione.\n\n"
+            f"_Tip: en el dashboard puedes pegarlo en el campo de la integración._"
+        )
+
+    def _complete_pending_setup(self, text: str) -> Optional[str]:
+        """If there's a pending setup waiting for a token, validate `text` as
+        the token, save it, and return the confirmation. Returns None if no
+        pending setup or if `text` doesn't look like a token."""
+        from pathlib import Path
+        import json
+        state_path = Path("state") / "pending_setup.json"
+        if not state_path.exists():
+            return None
+        try:
+            data = json.loads(state_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        integration_id = data.get("integration_id")
+        if not integration_id:
+            return None
+
+        from core.intent_engine import INTEGRATION_REGISTRY, validate_integration_token
+        info = INTEGRATION_REGISTRY.get(integration_id)
+        if not info or not info.get("env_var"):
+            state_path.unlink(missing_ok=True)
+            return None
+
+        token = text.strip()
+        # Quick sanity check: token-shaped strings are 20+ chars, may have _, ., -, alnum
+        if len(token) < 20 or any(c.isspace() for c in token):
+            return None  # doesn't look like a token — not a setup continuation
+
+        # Validate (best effort)
+        validation = validate_integration_token(integration_id, token)
+        # Save regardless (user explicitly pasted it)
+        env_var = info["env_var"]
+        os.environ[env_var] = token
+        try:
+            from core.ui import save_to_env
+            save_to_env(env_var, token)
+        except Exception:
+            # Fallback: write .env manually
+            try:
+                env_path = Path(".env")
+                lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+                found = False
+                with open(env_path, "w", encoding="utf-8") as f:
+                    for line in lines:
+                        if line.startswith(f"{env_var}="):
+                            f.write(f"{env_var}={token}\n")
+                            found = True
+                        else:
+                            f.write(line + "\n")
+                    if not found:
+                        f.write(f"{env_var}={token}\n")
+            except Exception:
+                pass
+
+        # Clear pending state
+        state_path.unlink(missing_ok=True)
+
+        if validation.get("ok"):
+            return (
+                f"{info['icon']} **{info['name']}** configurado correctamente.\n\n"
+                f"Variable `{env_var}` guardada en `.env`.\n"
+                f"Validación: ✅ {validation.get('detail', 'OK')}\n\n"
+                f"Listo para usar. Puedes invocarlo con skills o herramientas que "
+                f"usen {info['name']}."
+            )
+        else:
+            return (
+                f"{info['icon']} **{info['name']}** guardado (pero no se pudo validar).\n\n"
+                f"Variable `{env_var}` en `.env`.\n"
+                f"Detalle: ⚠️ {validation.get('detail', '?')}\n\n"
+                f"Verifica el token en {info['help_url']} y vuelve a pegarlo si falla."
+            )
+
     def _communicate_user_request(self, user_input: str) -> None:
         """Muestra al usuario QUÉ entendió el agente de su solicitud."""
         if not TERMINAL_AVAILABLE or term is None:
@@ -511,6 +636,18 @@ class AutomyxAgent:
                 user_input = f"{user_input}\n\n[Imágenes adjuntas: {len(saved_paths)} archivo(s) en {', '.join(saved_paths)}]"
             except Exception:
                 pass
+
+        # --- PENDING SETUP CHECK (if user is mid-setup, treat input as a token) ---
+        try:
+            setup_response = self._complete_pending_setup(user_input)
+            if setup_response:
+                self.history.append({"role": "user", "content": user_input})
+                self.history.append({"role": "assistant", "content": setup_response})
+                _set_phase("idle", "Integración configurada")
+                return setup_response
+        except Exception:
+            pass
+
         # --- FAST PATH (saludos / confirmaciones cortas, sin gastar LLM) ---
         fast_responses = {
             "hola": "¡Hola! Estoy listo. ¿En qué te ayudo?",
@@ -525,6 +662,60 @@ class AutomyxAgent:
             self.history.append({"role": "assistant", "content": fast_responses[user_lower]})
             _set_phase("idle", "Esperando tu solicitud...")
             return fast_responses[user_lower]
+
+        # --- INTENT-BASED FAST PATH (greetings, help, thanks, farewell, setup) ---
+        # These intents are conversational — NEVER call tools. The previous
+        # behavior of passing them to the LLM caused hallucinated tool calls
+        # like "ey mano" → open_program.
+        try:
+            from core.intent_engine import understand as _understand, extract_integration_target
+            _u = _understand(user_input)
+            _intent = _u.get("intent", "unknown")
+            if _intent in ("greeting", "thanks", "farewell"):
+                _responses = {
+                    "greeting": "¡Hola! Soy Automyx, tu agente de IA. ¿En qué te ayudo?",
+                    "thanks":   "¡De nada! Aquí sigo para lo que necesites.",
+                    "farewell": "¡Hasta luego! Si necesitas algo más, solo escríbeme.",
+                }
+                _resp = _responses[_intent]
+                self.history.append({"role": "user", "content": user_input})
+                self.history.append({"role": "assistant", "content": _resp})
+                _set_phase("idle", "Conversación casual")
+                return _resp
+            if _intent == "help":
+                _resp = (
+                    "Puedo hacer mucho por ti:\n\n"
+                    "🗣️  Conversar en lenguaje natural (con slang y typos)\n"
+                    "🛠️  Ejecutar herramientas (archivos, código, web, PC, multimedia)\n"
+                    "🧠  Analizar imágenes que me envíes\n"
+                    "📚  Configurar integraciones (Notion, GitHub, Telegram, etc.)\n"
+                    "⚡  Correr 6 tareas en paralelo\n"
+                    "🔌  Conectar canales: Telegram, Discord, Instagram, Web\n\n"
+                    "Dime qué necesitas o di 'configurar notion' para empezar."
+                )
+                self.history.append({"role": "user", "content": user_input})
+                self.history.append({"role": "assistant", "content": _resp})
+                _set_phase("idle", "Ayuda mostrada")
+                return _resp
+            if _intent == "setup_integration":
+                # Detect which integration the user wants
+                target = extract_integration_target(user_input)
+                if target:
+                    return self._guided_setup(target, _u)
+                else:
+                    _resp = (
+                        "Puedo ayudarte a configurar estas integraciones:\n\n"
+                        "📚 Notion\n🐙 GitHub\n✈️ Telegram\n💬 Discord\n📷 Instagram\n"
+                        "🗣️ ElevenLabs\n🅞 OpenAI\n🅐 Anthropic\n🔍 Tavily\n\n"
+                        "Di, por ejemplo: **configurar notion** o **conectar github**."
+                    )
+                    self.history.append({"role": "user", "content": user_input})
+                    self.history.append({"role": "assistant", "content": _resp})
+                    _set_phase("idle", "Menú de integraciones")
+                    return _resp
+        except Exception as _e:
+            # If intent detection fails, fall through to LLM (better than crashing)
+            pass
 
         # ---- FASE 1: ANALYZING (comprender quÃ© pidiÃ³ el usuario) ----
         global agent_status

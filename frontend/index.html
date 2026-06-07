@@ -965,6 +965,27 @@
                 </div>
             </div>
 
+            <!-- =====================================================
+                 INTEGRATIONS SETUP — Token cards with one-click config
+                 ===================================================== -->
+            <div class="mb-10 p-6 rounded-2xl border border-borderDark bg-panelDark/50 backdrop-blur-md shadow-xl">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                        <i class="fas fa-plug text-primary"></i>
+                        Integraciones · API Tokens
+                    </h3>
+                    <button onclick="fetchIntegrationsRegistry()" class="text-xs text-primary hover:text-white transition flex items-center gap-1">
+                        <i class="fas fa-refresh"></i> Recargar
+                    </button>
+                </div>
+                <p class="text-textMuted text-xs mb-5 leading-relaxed">
+                    Pega aquí el token de cada servicio. Lo guardamos cifrado en <code class="text-primary">.env</code> y validamos que funcione antes de confirmar.
+                </p>
+                <div id="integrations-setup-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div class="text-textMuted text-sm col-span-full text-center py-8">Cargando integraciones...</div>
+                </div>
+            </div>
+
             <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <!-- WhatsApp Card -->
                 <div class="bg-panelDark border-2 border-borderDark rounded-2xl p-8 flex flex-col items-center text-center shadow-lg transition-transform hover:scale-[1.02]">
@@ -1009,6 +1030,41 @@
                     <span id="tg-status" class="mt-4 text-sm font-semibold text-blue-400 hidden bg-blue-900 bg-opacity-30 px-4 py-2 rounded-lg border border-blue-800">
                         <i class="fas fa-satellite-dish mr-2 animate-pulse"></i> Bot en línea
                     </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- =====================================================
+             INTEGRATION SETUP MODAL — Token input + validation
+             ===================================================== -->
+        <div id="integration-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 backdrop-blur-sm" onclick="if(event.target===this)closeIntegrationModal()">
+            <div class="bg-panelDark border-2 border-primary/40 rounded-2xl p-8 max-w-lg w-full mx-4 shadow-[0_0_40px_rgba(0,170,255,0.4)]">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 id="integration-modal-title" class="text-xl font-bold text-white flex items-center gap-3">
+                        <span id="integration-modal-icon" class="text-3xl"></span>
+                        <span>Configurar Integración</span>
+                    </h3>
+                    <button onclick="closeIntegrationModal()" class="text-textMuted hover:text-white text-2xl leading-none">&times;</button>
+                </div>
+                <p id="integration-modal-hint" class="text-textMuted text-sm mb-4 leading-relaxed"></p>
+                <a id="integration-modal-help" href="#" target="_blank" rel="noopener" class="text-primary text-xs hover:underline flex items-center gap-1 mb-5">
+                    <i class="fas fa-external-link-alt"></i> ¿Dónde obtengo el token?
+                </a>
+                <label class="block text-xs text-textMuted mb-2 uppercase tracking-wider">Pega tu token aquí</label>
+                <input id="integration-modal-input" type="password" placeholder="ntn_..." autocomplete="off" spellcheck="false"
+                       class="w-full bg-bgDark border border-borderDark rounded-lg px-4 py-3 text-white text-sm font-mono focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/30 transition mb-3" />
+                <div class="flex items-center gap-2 text-xs text-textMuted mb-5">
+                    <input type="checkbox" id="integration-modal-show" onchange="document.getElementById('integration-modal-input').type = this.checked ? 'text' : 'password'" class="rounded" />
+                    <label for="integration-modal-show" class="cursor-pointer">Mostrar el token mientras lo pego</label>
+                </div>
+                <div id="integration-modal-result" class="hidden mb-4 p-3 rounded-lg text-sm"></div>
+                <div class="flex gap-3">
+                    <button onclick="submitIntegrationToken()" class="flex-1 bg-primary hover:bg-primary/80 text-bgDark font-bold py-3 rounded-xl transition shadow-[0_4px_14px_rgba(0,170,255,0.4)]">
+                        <i class="fas fa-check mr-2"></i> Validar y Guardar
+                    </button>
+                    <button onclick="closeIntegrationModal()" class="px-6 bg-bgDark hover:bg-borderDark text-white font-semibold py-3 rounded-xl transition">
+                        Cancelar
+                    </button>
                 </div>
             </div>
         </div>
@@ -2619,11 +2675,169 @@ C:\Users\Automyx>
         function startChannelsPolling() {
             if (_channelsTimer) return;
             fetchChannelsState();
+            fetchIntegrationsRegistry();
             _channelsTimer = setInterval(fetchChannelsState, 5000);
         }
         function stopChannelsPolling() {
             if (_channelsTimer) { clearInterval(_channelsTimer); _channelsTimer = null; }
         }
+
+        // ============================================================
+        // INTEGRATIONS SETUP — Token cards with modal flow
+        // ============================================================
+        let _integrationCache = {};
+        let _activeIntegrationId = null;
+
+        function _integrationSetupCard(item) {
+            const statusColor = item.configured ? 'text-green-400' : 'text-textMuted';
+            const statusBg    = item.configured ? 'bg-green-500/10 border-green-500/30' : 'bg-bgDark/50 border-borderDark';
+            const statusLabel = item.configured ? 'Configurado' : 'No configurado';
+            const statusDot   = item.configured ? 'bg-green-500' : 'bg-gray-500';
+            const actionLabel = item.configured ? 'Rotar' : 'Configurar';
+            const actionClass = item.configured
+                ? 'bg-yellow-600 hover:bg-yellow-500 text-white'
+                : 'bg-primary hover:bg-primary/80 text-bgDark';
+            return `
+                <div class="rounded-xl p-4 border ${statusBg} transition hover:scale-[1.02]">
+                    <div class="flex items-center gap-3 mb-3">
+                        <div class="w-11 h-11 rounded-full bg-bgDark/80 flex items-center justify-center text-2xl shadow-inner">
+                            ${item.icon}
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="font-bold text-white text-sm">${item.name}</div>
+                            <div class="flex items-center gap-1.5 text-xs ${statusColor}">
+                                <span class="w-1.5 h-1.5 rounded-full ${statusDot}"></span>
+                                ${statusLabel}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="text-xs text-textMuted mb-3 font-mono truncate">${item.env_var || '—'}</div>
+                    <div class="flex gap-2">
+                        <button onclick="openIntegrationModal('${item.id}')" class="flex-1 ${actionClass} text-xs font-bold py-2 rounded-lg transition">
+                            ${actionLabel}
+                        </button>
+                        ${item.configured
+                            ? `<button onclick="deleteIntegrationToken('${item.id}')" class="px-3 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white text-xs font-bold py-2 rounded-lg transition" title="Quitar token">
+                                <i class="fas fa-trash"></i>
+                               </button>`
+                            : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        async function fetchIntegrationsRegistry() {
+            try {
+                const r = await fetch('/api/integrations/registry', { headers: apiHeaders() });
+                if (!r.ok) return;
+                const data = await r.json();
+                _integrationCache = {};
+                (data.integrations || []).forEach(it => { _integrationCache[it.id] = it; });
+                const grid = document.getElementById('integrations-setup-grid');
+                if (grid) {
+                    grid.innerHTML = (data.integrations || []).map(_integrationSetupCard).join('') ||
+                        '<div class="text-textMuted text-sm col-span-full text-center py-8">No hay integraciones disponibles.</div>';
+                }
+            } catch (e) {
+                console.error('fetchIntegrationsRegistry:', e);
+            }
+        }
+
+        function openIntegrationModal(integrationId) {
+            const item = _integrationCache[integrationId];
+            if (!item) return;
+            _activeIntegrationId = integrationId;
+            document.getElementById('integration-modal-title').innerHTML =
+                `<span class="text-3xl">${item.icon}</span><span>Configurar ${item.name}</span>`;
+            document.getElementById('integration-modal-icon').textContent = item.icon;
+            document.getElementById('integration-modal-hint').textContent =
+                item.format_hint || 'Pega tu token a continuación.';
+            const helpLink = document.getElementById('integration-modal-help');
+            if (item.help_url) {
+                helpLink.href = item.help_url;
+                helpLink.style.display = 'flex';
+            } else {
+                helpLink.style.display = 'none';
+            }
+            document.getElementById('integration-modal-input').value = '';
+            document.getElementById('integration-modal-input').type = 'password';
+            document.getElementById('integration-modal-show').checked = false;
+            const result = document.getElementById('integration-modal-result');
+            result.classList.add('hidden');
+            result.className = 'hidden mb-4 p-3 rounded-lg text-sm';
+            const modal = document.getElementById('integration-modal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            setTimeout(() => document.getElementById('integration-modal-input').focus(), 100);
+        }
+
+        function closeIntegrationModal() {
+            const modal = document.getElementById('integration-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            _activeIntegrationId = null;
+        }
+
+        function _showModalResult(ok, message, detail) {
+            const el = document.getElementById('integration-modal-result');
+            el.classList.remove('hidden');
+            el.className = 'mb-4 p-3 rounded-lg text-sm ' + (ok ? 'bg-green-500/10 border border-green-500/40 text-green-300' : 'bg-red-500/10 border border-red-500/40 text-red-300');
+            el.innerHTML = `<div class="font-bold">${message}</div>${detail ? `<div class="text-xs mt-1 opacity-80">${detail}</div>` : ''}`;
+        }
+
+        async function submitIntegrationToken() {
+            if (!_activeIntegrationId) return;
+            const token = document.getElementById('integration-modal-input').value.trim();
+            if (!token) { _showModalResult(false, 'Pega el token primero.'); return; }
+            _showModalResult(true, '⏳ Validando...', 'Comprobando con el servicio.');
+            try {
+                const r = await fetch('/api/integrations/save_token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...apiHeaders() },
+                    body: JSON.stringify({ integration_id: _activeIntegrationId, token })
+                });
+                const data = await r.json();
+                if (data.error) { _showModalResult(false, '❌ Error', data.error); return; }
+                const v = data.validation || {};
+                if (v.ok) {
+                    _showModalResult(true,
+                        `✅ ${_integrationCache[_activeIntegrationId].name} configurado y validado.`,
+                        v.detail || `Token guardado en .env (${data.env_var})`);
+                    setTimeout(() => { closeIntegrationModal(); fetchIntegrationsRegistry(); }, 1500);
+                } else {
+                    _showModalResult(true,
+                        `⚠️ Token guardado, pero no se pudo validar.`,
+                        v.detail || 'El servicio devolvió un error. Verifica el token y usa el botón "Rotar" para reemplazarlo.');
+                    setTimeout(() => { closeIntegrationModal(); fetchIntegrationsRegistry(); }, 2500);
+                }
+            } catch (e) {
+                _showModalResult(false, '❌ Error de red', e.message);
+            }
+        }
+
+        async function deleteIntegrationToken(integrationId) {
+            const item = _integrationCache[integrationId];
+            if (!item) return;
+            if (!confirm(`¿Quitar el token de ${item.name}?`)) return;
+            try {
+                const r = await fetch(`/api/integrations/${integrationId}/token`, {
+                    method: 'DELETE', headers: apiHeaders()
+                });
+                const data = await r.json();
+                if (data.error) { alert('Error: ' + data.error); return; }
+                fetchIntegrationsRegistry();
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        // Submit on Enter in the modal input
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && _activeIntegrationId && document.activeElement && document.activeElement.id === 'integration-modal-input') {
+                submitIntegrationToken();
+            }
+            if (e.key === 'Escape' && _activeIntegrationId) closeIntegrationModal();
+        });
 
         async function fetchTasks() {
             try {

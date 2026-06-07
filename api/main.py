@@ -1185,6 +1185,104 @@ async def terminal_state_endpoint(_: bool = Depends(verify_gateway_token)):
         return {"error": str(e)}
 
 
+@app.get("/api/integrations/registry")
+async def integrations_registry_endpoint(_: bool = Depends(verify_gateway_token)):
+    """Listado de integraciones soportadas con su info de setup."""
+    try:
+        from core.intent_engine import INTEGRATION_REGISTRY
+        from pathlib import Path
+        env_text = Path(".env").read_text(encoding="utf-8", errors="ignore") if Path(".env").exists() else ""
+        items = []
+        for key, info in INTEGRATION_REGISTRY.items():
+            env_var = info.get("env_var")
+            configured = False
+            if env_var:
+                configured = bool(os.environ.get(env_var)) or f"{env_var}=" in env_text
+            items.append({
+                "id":            key,
+                "name":          info["name"],
+                "icon":          info["icon"],
+                "env_var":       env_var,
+                "help_url":      info["help_url"],
+                "format_hint":   info["format_hint"],
+                "configured":    configured,
+                "has_validator": bool(info.get("validate")),
+            })
+        return {"integrations": items, "count": len(items)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+class SaveTokenPayload(BaseModel):
+    integration_id: str
+    token: str
+
+
+@app.post("/api/integrations/save_token")
+async def save_integration_token(payload: SaveTokenPayload,
+                                    _: bool = Depends(verify_gateway_token)):
+    """Guarda un token de integración en .env y opcionalmente lo valida."""
+    try:
+        from core.intent_engine import INTEGRATION_REGISTRY, validate_integration_token
+        info = INTEGRATION_REGISTRY.get(payload.integration_id)
+        if not info:
+            return {"error": f"Integración desconocida: {payload.integration_id}"}
+        env_var = info.get("env_var")
+        if not env_var:
+            return {"error": f"{info['name']} no requiere token (escaneo QR o auth interactivo)"}
+        token = payload.token.strip()
+        if len(token) < 8:
+            return {"error": "Token demasiado corto"}
+        # Save
+        os.environ[env_var] = token
+        env_path = Path(".env")
+        lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+        found = False
+        with open(env_path, "w", encoding="utf-8") as f:
+            for line in lines:
+                if line.startswith(f"{env_var}="):
+                    f.write(f"{env_var}={token}\n")
+                    found = True
+                else:
+                    f.write(line + "\n")
+            if not found:
+                f.write(f"{env_var}={token}\n")
+        # Validate (best effort)
+        validation = validate_integration_token(payload.integration_id, token)
+        return {
+            "ok": True,
+            "env_var": env_var,
+            "configured": True,
+            "validation": validation,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.delete("/api/integrations/{integration_id}/token")
+async def delete_integration_token(integration_id: str,
+                                     _: bool = Depends(verify_gateway_token)):
+    """Elimina el token de una integración (la deja 'no configurada')."""
+    try:
+        from core.intent_engine import INTEGRATION_REGISTRY
+        info = INTEGRATION_REGISTRY.get(integration_id)
+        if not info or not info.get("env_var"):
+            return {"error": "Integración inválida o sin env_var"}
+        env_var = info["env_var"]
+        if env_var in os.environ:
+            del os.environ[env_var]
+        env_path = Path(".env")
+        if env_path.exists():
+            lines = env_path.read_text(encoding="utf-8").splitlines()
+            with open(env_path, "w", encoding="utf-8") as f:
+                for line in lines:
+                    if not line.startswith(f"{env_var}="):
+                        f.write(line + "\n")
+        return {"ok": True, "env_var": env_var, "configured": False}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/api/tools/catalog")
 async def tools_catalog_endpoint(category: Optional[str] = None, _: bool = Depends(verify_gateway_token)):
     """Catálogo de tools disponibles. Si category=sees, devuelve conteo por seed."""
