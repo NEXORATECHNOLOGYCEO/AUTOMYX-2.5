@@ -484,8 +484,33 @@ class AutomyxAgent:
             term.info(intent_summary)
 
     def run(self, user_input: str, custom_system_prompt: str = None, agent_skills: dict = None,
-            agent_id: str = "main", progress_callback=None) -> str:
-        """Bucle principal del agente con fases claras y comunicación rica."""
+            agent_id: str = "main", progress_callback=None, images: list = None) -> str:
+        """Bucle principal del agente con fases claras y comunicación rica.
+
+        `images` (opcional): lista de dicts {"data": base64, "mime": "image/png"}.
+        Se guardan a disco y se referencian en el contexto para modelos con visión.
+        """
+        # --- Save incoming images to disk for downstream tools / vision models ---
+        if images:
+            try:
+                import base64
+                from pathlib import Path
+                import time as _t
+                img_dir = Path("state") / "incoming_images"
+                img_dir.mkdir(parents=True, exist_ok=True)
+                saved_paths = []
+                for idx, img in enumerate(images):
+                    b64 = img.get("data", "")
+                    mime = img.get("mime", "image/png")
+                    ext = mime.split("/")[-1] if "/" in mime else "png"
+                    if "," in b64:
+                        b64 = b64.split(",", 1)[1]
+                    fname = f"img_{int(_t.time()*1000)}_{idx}.{ext}"
+                    (img_dir / fname).write_bytes(base64.b64decode(b64))
+                    saved_paths.append(str(img_dir / fname))
+                user_input = f"{user_input}\n\n[Imágenes adjuntas: {len(saved_paths)} archivo(s) en {', '.join(saved_paths)}]"
+            except Exception:
+                pass
         # --- FAST PATH (saludos / confirmaciones cortas, sin gastar LLM) ---
         fast_responses = {
             "hola": "¡Hola! Estoy listo. ¿En qué te ayudo?",

@@ -116,6 +116,8 @@ class GatewayMessage(BaseModel):
     message: str
     agent_id: str = "main"
     model: str | None = None
+    # Optional multimodal payload — list of {data: base64, mime: image/png}
+    images: list[dict] | None = None
 
 
 class OllamaPullRequest(BaseModel):
@@ -918,9 +920,14 @@ async def universal_gateway_inbound(data: GatewayMessage, _: bool = Depends(veri
         # Actualizar el modelo dinámicamente si el canal lo solicita
         if data.model and data.model != agent.model_name:
             agent.update_model(data.model)
-            
-        result = agent.run(data.message)
-        return {"reply": result, "channel": data.channel, "agent_used": data.agent_id}
+
+        result = agent.run(data.message, images=data.images)
+        return {
+            "reply": result,
+            "channel": data.channel,
+            "agent_used": data.agent_id,
+            "has_images": bool(data.images),
+        }
     except Exception as e:
         return {"error": str(e)}
 
@@ -1053,6 +1060,126 @@ async def skills_catalog_endpoint(_: bool = Depends(verify_gateway_token)):
             "categories": SKILLS_CATALOG,
             "total_skills": count_skills(),
             "total_tools_in_catalog": count_tools_in_catalog(),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/state/channels")
+async def channels_state_endpoint(_: bool = Depends(verify_gateway_token)):
+    """Estado de los canales de comunicación (Telegram, Discord, Instagram, etc.)."""
+    try:
+        import shutil
+        from pathlib import Path
+        channels = []
+        # Telegram
+        has_tg = bool(os.environ.get("TELEGRAM_BOT_TOKEN")) or (Path(".env").exists() and "TELEGRAM_BOT_TOKEN=" in Path(".env").read_text(encoding="utf-8", errors="ignore"))
+        channels.append({"id": "telegram",  "name": "Telegram",  "icon": "✈️", "configured": has_tg, "running": False})
+        # Discord
+        has_dc = bool(os.environ.get("DISCORD_BOT_TOKEN")) or (Path(".env").exists() and "DISCORD_BOT_TOKEN=" in Path(".env").read_text(encoding="utf-8", errors="ignore"))
+        channels.append({"id": "discord",   "name": "Discord",   "icon": "💬", "configured": has_dc, "running": False})
+        # Instagram
+        has_ig = bool(os.environ.get("INSTAGRAM_ACCESS_TOKEN")) or (Path(".env").exists() and "INSTAGRAM_ACCESS_TOKEN=" in Path(".env").read_text(encoding="utf-8", errors="ignore"))
+        channels.append({"id": "instagram", "name": "Instagram", "icon": "📷", "configured": has_ig, "running": False})
+        # WhatsApp
+        has_wa = Path("state/whatsapp_session").exists() or Path("nexus_data/whatsapp").exists()
+        channels.append({"id": "whatsapp",  "name": "WhatsApp",  "icon": "🟢", "configured": has_wa, "running": False})
+        # Web dashboard
+        channels.append({"id": "web",       "name": "Web Dashboard", "icon": "🌐", "configured": True, "running": True})
+        # Detect running processes
+        try:
+            import psutil
+            for proc in psutil.process_iter(["name", "cmdline"]):
+                cmdline = " ".join(proc.info.get("cmdline") or [])
+                for cid, fname in [("telegram", "telegram_bot.py"), ("discord", "discord_bot.py"), ("instagram", "instagram_bot.py")]:
+                    if fname in cmdline and not next((c for c in channels if c["id"] == cid), {}).get("running"):
+                        for c in channels:
+                            if c["id"] == cid:
+                                c["running"] = True
+        except ImportError:
+            pass
+        # Notion integration
+        has_notion = bool(os.environ.get("NOTION_API_KEY")) or (Path(".env").exists() and "NOTION_API_KEY=" in Path(".env").read_text(encoding="utf-8", errors="ignore"))
+        integrations = [
+            {"id": "notion",     "name": "Notion",     "icon": "📚", "configured": has_notion},
+            {"id": "github",     "name": "GitHub",     "icon": "🐙", "configured": bool(os.environ.get("GITHUB_TOKEN"))},
+            {"id": "elevenlabs", "name": "ElevenLabs", "icon": "🗣️", "configured": bool(os.environ.get("ELEVENLABS_API_KEY"))},
+            {"id": "openai",     "name": "OpenAI",     "icon": "🅞", "configured": bool(os.environ.get("OPENAI_API_KEY"))},
+            {"id": "anthropic",  "name": "Anthropic",  "icon": "🅐", "configured": bool(os.environ.get("ANTHROPIC_API_KEY"))},
+            {"id": "tavily",     "name": "Tavily",     "icon": "🔍", "configured": bool(os.environ.get("TAVILY_API_KEY"))},
+        ]
+        return {"channels": channels, "integrations": integrations}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/state/skills")
+async def active_skills_endpoint(_: bool = Depends(verify_gateway_token)):
+    """Skills activas (las que el usuario seleccionó en el wizard o activó después)."""
+    try:
+        from pathlib import Path
+        state_path = Path("state/onboard_state.json")
+        active = []
+        if state_path.exists():
+            import json
+            data = json.loads(state_path.read_text(encoding="utf-8"))
+            active = data.get("skills", []) or []
+        # También incluir el environment override
+        env_skills = os.environ.get("AUTOMYX_ACTIVE_SKILLS", "")
+        if env_skills:
+            active = [s.strip() for s in env_skills.split(",") if s.strip()]
+        return {
+            "active": active,
+            "count": len(active),
+            "source": "onboard_state.json" if state_path.exists() else "env",
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/state/skills/toggle")
+async def toggle_skill_endpoint(payload: dict, _: bool = Depends(verify_gateway_token)):
+    """Activa o desactiva un skill en el estado persistido."""
+    try:
+        from pathlib import Path
+        import json
+        skill_name = payload.get("name")
+        enabled = bool(payload.get("enabled", True))
+        if not skill_name:
+            return {"error": "Missing 'name' in payload"}
+        state_path = Path("state/onboard_state.json")
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {}
+        if state_path.exists():
+            data = json.loads(state_path.read_text(encoding="utf-8"))
+        active = set(data.get("skills", []) or [])
+        if enabled:
+            active.add(skill_name)
+        else:
+            active.discard(skill_name)
+        data["skills"] = sorted(active)
+        state_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        return {"ok": True, "active": data["skills"], "count": len(active)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/state/terminal")
+async def terminal_state_endpoint(_: bool = Depends(verify_gateway_token)):
+    """Estado del terminal local (CLI ejecutándose, sesión activa, etc.)."""
+    try:
+        import platform
+        import socket
+        hostname = socket.gethostname()
+        return {
+            "platform": sys.platform,
+            "python": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            "hostname": hostname,
+            "cwd": os.getcwd(),
+            "user": os.environ.get("USERNAME") or os.environ.get("USER", "?"),
+            "pid": os.getpid(),
+            "automyx_version": os.environ.get("AUTOMYX_VERSION", "2.5.0"),
+            "model": os.environ.get("AUTOMYX_MODEL", "openai/gpt-oss-120b"),
         }
     except Exception as e:
         return {"error": str(e)}

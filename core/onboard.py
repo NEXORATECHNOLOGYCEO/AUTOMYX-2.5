@@ -1,415 +1,541 @@
+"""
+Automyx 2.5 — Interactive Onboarding Wizard
+============================================
+Glassmorphism blue-themed TUI with a 6-step setup:
+  1. Welcome + security disclaimer
+  2. Pick an LLM model (local + cloud)
+  3. Pick a messaging channel (or skip)
+  4. Multi-select skills from the 86-skill marketplace
+  5. Pick integrations (Notion, GitHub, etc.) and paste tokens
+  6. Confirm + save to .env / SQLite
+
+All visuals come from `core.ui` (electric blue glassmorphism design system).
+"""
+from __future__ import annotations
+
 import os
 import sys
 import time
-from colorama import Fore, Style, init
+import json
+from pathlib import Path
+
+# Reuse the shared design system
+from core.ui import (
+    NAVY, DEEP_BLUE, BLUE, ELECTRIC, CYAN, GLOW, WHITE, GRAY,
+    WARN, OK, ERR, PURPLE,
+    RICH_AVAILABLE, QUESTIONARY_AVAILABLE, console,
+    show_banner, show_step_header, glass_panel, ok, info, warn, err, section,
+    automyx_style, skill_table, save_to_env,
+    AUTOMYX_VERSION, AUTOMYX_CODENAME,
+)
+
+# Rich + questionary (after ui.py)
+if RICH_AVAILABLE:
+    from rich.panel import Panel
+    from rich.text import Text
+    from rich.table import Table
+    from rich import box as rich_box
+    from rich.align import Align
+
+if QUESTIONARY_AVAILABLE:
+    import questionary
+    from questionary import Choice, Separator
 
 try:
-    import questionary
-    from questionary import Choice
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.text import Text
-    from rich.table import Table
-    from rich.tree import Tree
-    from rich.layout import Layout
-    from rich import box as rich_box
-except ImportError:
-    print("Instalando dependencias necesarias para la interfaz extrema...")
-    os.system(f"{sys.executable} -m pip install questionary rich prompt_toolkit")
-    import questionary
-    from questionary import Choice
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.text import Text
-    from rich.table import Table
-    from rich.tree import Tree
-    from rich.layout import Layout
-    from rich import box as rich_box
-
-from core.config import config
-
-init(autoreset=True)
-console = Console()
-
-def save_to_env(key: str, value: str):
-    """Guarda un token o variable en el archivo .env de forma persistente"""
-    env_path = ".env"
-    lines = []
-    if os.path.exists(env_path):
-        with open(env_path, "r") as f:
-            lines = f.readlines()
-
-    with open(env_path, "w") as f:
-        key_found = False
-        for line in lines:
-            if line.startswith(f"{key}="):
-                f.write(f"{key}={value}\n")
-                key_found = True
-            else:
-                f.write(line)
-        if not key_found:
-            f.write(f"{key}={value}\n")
+    from core.config import config
+except Exception:
+    config = None
 
 
-def show_skills_catalog():
-    """Muestra el catálogo profesional de skills (82+ skills, 500+ tools)."""
+# ============================================================================
+# Persistent state
+# ============================================================================
+def _state_path() -> Path:
+    p = Path("state") / "onboard_state.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def save_state(state: dict):
+    p = _state_path()
+    p.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
     try:
-        from core.intent_engine import SKILLS_CATALOG, count_skills, count_tools_in_catalog
+        import sqlite3
+        db_path = Path("state") / "automyx.sqlite"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS onboard_state ("
+                "  id INTEGER PRIMARY KEY,"
+                "  state_json TEXT NOT NULL,"
+                "  updated_at TEXT DEFAULT CURRENT_TIMESTAMP"
+                ")"
+            )
+            conn.execute(
+                "INSERT INTO onboard_state (state_json) VALUES (?)",
+                (json.dumps(state),),
+            )
+            conn.commit()
     except Exception as e:
-        console.print(f"[red]No se pudo cargar el catálogo de skills: {e}[/red]")
-        return
-
-    n_skills = count_skills()
-    n_tools = count_tools_in_catalog()
-
-    # Banner épico
-    console.print()
-    title = Text()
-    title.append("⚡ CATÁLOGO DE HABILIDADES ⚡\n", style="bold bright_cyan")
-    title.append(f"Automyx v2.5 - {n_skills} Skills  ·  {n_tools}+ Tools\n", style="bright_yellow")
-    title.append("Inteligencia Artificial Omnipotente", style="dim white")
-    console.print(Panel(title, border_style="bright_cyan", box=rich_box.DOUBLE, padding=(1, 4)))
-
-    # Tabla resumen
-    table = Table(
-        title="[bold bright_cyan]Skills por Categoría[/bold bright_cyan]",
-        box=rich_box.ROUNDED,
-        border_style="bright_cyan",
-        show_lines=False,
-        title_justify="left",
-    )
-    table.add_column("Categoría", style="bold bright_cyan", no_wrap=True)
-    table.add_column("Skills", style="bright_green", justify="right")
-    table.add_column("Tools", style="bright_yellow", justify="right")
-    table.add_column("Highlights", style="dim white")
-
-    for category, skills in SKILLS_CATALOG.items():
-        n_s = len(skills)
-        n_t = sum(int(str(s.get("tools", "0")).replace("+", "")) for s in skills if s.get("tools", "0").replace("+", "").isdigit())
-        # Top 3 descripciones resumidas
-        highlights = ", ".join(s.get("name", "") for s in skills[:3])
-        if len(skills) > 3:
-            highlights += f", +{len(skills) - 3} más"
-        table.add_row(category, str(n_s), str(n_t), highlights)
-
-    # Fila TOTAL
-    table.add_row(
-        "[bold bright_magenta]TOTAL[/bold bright_magenta]",
-        f"[bold bright_green]{n_skills}[/bold bright_green]",
-        f"[bold bright_yellow]{n_tools}+[/bold bright_yellow]",
-        f"[dim]Capacidades profesionales de fábrica[/dim]",
-        style="on grey11",
-    )
-    console.print(table)
-    console.print()
-
-    # Tree detallado con las skills
-    tree = Tree(
-        f"[bold bright_yellow]📚 Detalle de las {n_skills} Skills disponibles[/bold bright_yellow]",
-        guide_style="bright_yellow",
-    )
-    for category, skills in SKILLS_CATALOG.items():
-        branch = tree.add(f"[bold bright_cyan]{category}[/bold bright_cyan]  ({len(skills)} skills)")
-        for skill in skills:
-            icon = skill.get("icon", "•")
-            name = skill.get("name", "?")
-            tools = skill.get("tools", "?")
-            desc = skill.get("desc", "")
-            leaf = branch.add(f"{icon}  [bold white]{name}[/bold white]  [bright_yellow]({tools} tools)[/bright_yellow]")
-            if desc:
-                leaf.add(f"[dim]{desc}[/dim]", style="dim")
-    console.print(tree)
-    console.print()
+        warn(f"No se pudo persistir en SQLite: {e}")
 
 
-def show_capabilities_summary():
-    """Muestra el resumen épico de capacidades."""
-    caps = [
-        ("🧠", "IA Omnipotente", "Entiende slang, typos y lenguaje natural"),
-        ("⚡", "Respuesta Ultra-Rápida", "Streaming en tiempo real con baja latencia"),
-        ("🧵", "Multi-Tarea Paralela", "Múltiples preguntas ejecutándose simultáneamente"),
-        ("📚", f"82+ Skills", "Desde PDF hasta 3D, video, crypto, RAG"),
-        ("🛠️", "2500+ Tools", "Aliases coloquiales en español e inglés"),
-        ("🌍", "Multi-idioma", "100+ idiomas con traducción automática"),
-        ("💼", "Producción", "API REST, WebSocket, multi-canal"),
-        ("🔌", "MCP Ready", "Integración con cualquier cliente LLM"),
-    ]
-    console.print(
-        Panel(
-            "\n".join(f"  {icon}  [bold bright_cyan]{name}[/bold bright_cyan]  -  [white]{desc}[/white]" for icon, name, desc in caps),
-            title="[bold bright_magenta]🚀 Capacidades de Automyx 2.5[/bold bright_magenta]",
-            border_style="bright_magenta",
-            box=rich_box.HEAVY,
-            padding=(1, 2),
-        )
-    )
-    console.print()
+def load_state() -> dict:
+    p = _state_path()
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
 
-def run_onboarding():
-    # Clear screen
-    os.system('cls' if os.name == 'nt' else 'clear')
 
-    # Banner
-    banner = f"""
-{Fore.CYAN}{Style.BRIGHT}    █████╗ ██╗   ██╗████████╗ ██████╗ ███╗   ███╗██╗   ██╗██╗  ██╗
-   ██╔══██╗██║   ██║╚══██╔══╝██╔═══██╗████╗ ████║╚██╗ ██╔╝╚██╗██╔╝
-   ███████║██║   ██║   ██║   ██║   ██║██╔████╔██║ ╚████╔╝  ╚███╔╝
-   ██╔══██║███╗██║   ██║   ██║   ██║██║╚██╔╝██║  ╚██╔╝   ██╔██╗
-   ██║  ██║  ████║   ██║   ╚██████╔╝██║ ╚═╝ ██║   ██║   ██╔╝ ██╗
-   ╚═╝  ╚═╝   ╚═══╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝   ╚═╝   ╚═╝  ╚═╝{Style.RESET_ALL}
-    """
-    print(banner)
-    print(f"{Fore.CYAN}Automyx Gateway Onboarding v2.5.0 - The most powerful Agentic AI{Style.RESET_ALL}\n")
-
-    # Security Panel
-    sec_text = (
-        "Please read: https://github.com/NEXORATECHNOLOGYCEO/AUTOMYX-2.5\n\n"
-        "Automyx agents can run commands, read/write files, and act through any tools you enable.\n"
-        "They have Universal App Control, OSINT capabilities, and Full System Access.\n\n"
-        "If you're new to this, start with the sandbox and least privilege. It helps limit what\n"
-        "an agent can do if it's tricked or makes a mistake.\n"
-        "Learn more: https://github.com/NEXORATECHNOLOGYCEO/AUTOMYX-2.5#seguridad"
-    )
-    console.print(Panel(sec_text, title="[bold cyan]Security[/bold cyan]", border_style="cyan", padding=(1, 2)))
-
-    custom_style = questionary.Style([
-        ('qmark', 'fg:#00f0ff bold'),
-        ('question', 'bold fg:#ffffff'),
-        ('answer', 'fg:#00f0ff bold'),
-        ('pointer', 'fg:#00f0ff bold'),
-        ('highlighted', 'fg:#00f0ff bold'),
-        ('selected', 'fg:#00f0ff'),
-        ('separator', 'fg:#0055ff bold'),
-        ('instruction', 'fg:#888888'),
-        ('text', 'fg:#cccccc'),
-        ('disabled', 'fg:#555555 italic')
-    ])
-
-    continue_setup = questionary.confirm(
-        "I understand this is powerful and inherently risky. Continue?",
-        default=True,
-        style=custom_style
-    ).ask()
-
-    if not continue_setup:
-        print(f"{Fore.RED}Setup aborted.{Style.RESET_ALL}")
-        sys.exit(0)
-
-    print(f"\n{Fore.CYAN}Automyx just smashed the AI! And here's what you can do 🔥{Style.RESET_ALL}\n")
-
-    # Mostrar catálogo profesional de skills
-    show_skills_catalog()
-    show_capabilities_summary()
-
-    # Autodetectar modelos locales de Ollama
-    local_ollama_choices = []
+# ============================================================================
+# Skill catalog loader
+# ============================================================================
+def _load_skill_catalog() -> list:
+    out = []
     try:
-        from core.agent import OllamaManager
-        installed_models = OllamaManager.list_models()
-        if installed_models:
-            local_ollama_choices.append(questionary.Separator("--- Modelos Locales (Ollama) ---"))
-            for m in installed_models:
-                name = m.get("name", "unknown")
-                local_ollama_choices.append(Choice(f"🔒 {name} (Local)", f"ollama/{name}"))
+        from core.intent_engine import SKILLS_CATALOG
+        if isinstance(SKILLS_CATALOG, dict):
+            for cat_name, skills_in_cat in SKILLS_CATALOG.items():
+                if not isinstance(skills_in_cat, list):
+                    continue
+                cat_icon = skills_in_cat[0].get("icon", "🧩") if skills_in_cat else "🧩"
+                for skill in skills_in_cat:
+                    out.append({
+                        "name": skill.get("name", "?"),
+                        "description": skill.get("desc", skill.get("description", "")),
+                        "category": cat_name,
+                        "icon": skill.get("icon", cat_icon),
+                        "tools": skill.get("tools", ""),
+                    })
+            if out:
+                return out
+        elif isinstance(SKILLS_CATALOG, list):
+            for cat in SKILLS_CATALOG:
+                cat_name = cat.get("name", "Otros")
+                cat_icon = cat.get("icon", "📦")
+                for skill in cat.get("skills", []):
+                    out.append({
+                        "name": skill.get("name", "?"),
+                        "description": skill.get("description", ""),
+                        "category": cat_name,
+                        "icon": cat_icon,
+                        "tools": skill.get("tools", []),
+                    })
+            if out:
+                return out
     except Exception:
         pass
 
-    # Provider Selection
-    providers = [
-        questionary.Separator("--- Modelos Cloud (Alto Rendimiento) ---"),
-        Choice("⚡ MiniMax-m2.7 (NVIDIA API)", "minimaxai/minimax-m2.7"),
-        Choice("🧠 GPT-OSS-120b (NVIDIA API)", "openai/gpt-oss-120b"),
-        Choice("🌐 GLM-5.1 (NVIDIA API)", "z-ai/glm-5.1"),
-    ]
-    
-    # Agregar modelos de Ollama detectados dinámicamente
-    providers.extend(local_ollama_choices)
-    
-    # Agregar otros proveedores comerciales
-    providers.extend([
-        questionary.Separator("--- APIs Comerciales ---"),
-        Choice("OpenAI (GPT-4o)", "openai/gpt-4o"),
-        Choice("Anthropic (Claude 3.5 Sonnet)", "anthropic/claude-3-5-sonnet-20240620"),
-        Choice("Google (Gemini 1.5 Pro)", "google/gemini-1.5-pro"),
-        Choice("Copilot (GitHub + Local Proxy)", "copilot"),
-        Choice("Groq (Grok-2)", "groq"),
-        Choice("Mistral AI", "mistral"),
-    ])
+    skills_dir = Path("skills")
+    if skills_dir.is_dir():
+        for d in sorted(skills_dir.iterdir()):
+            if d.is_dir() and (d / "SKILL.md").exists():
+                name = d.name
+                desc = ""
+                try:
+                    text = (d / "SKILL.md").read_text(encoding="utf-8", errors="ignore")
+                    for line in text.splitlines():
+                        if line.strip().startswith("#"):
+                            continue
+                        if line.strip():
+                            desc = line.strip()[:120]
+                            break
+                except Exception:
+                    pass
+                out.append({"name": name, "description": desc, "category": "General", "icon": "🧩", "tools": ""})
+    return out
 
-    provider = questionary.select(
-        "Model/auth provider:",
-        choices=providers,
-        style=custom_style,
-        use_indicator=True,
-        pointer="♦"
-    ).ask()
 
-    # Auth Token Prompt
-    api_key_env_var = None
-    
-    if provider:
-        if provider.startswith("openai/gpt-4"):
-            api_key_env_var = "OPENAI_API_KEY"
-            token = questionary.password(f"Enter OpenAI API Key (sk-...):", style=custom_style).ask()
-            if token:
-                os.environ[api_key_env_var] = token
-                save_to_env(api_key_env_var, token)
-        elif provider.startswith("anthropic/"):
-            api_key_env_var = "ANTHROPIC_API_KEY"
-            token = questionary.password(f"Enter Anthropic API Key (sk-ant-...):", style=custom_style).ask()
-            if token:
-                os.environ[api_key_env_var] = token
-                save_to_env(api_key_env_var, token)
-        elif provider.startswith("google/"):
-            api_key_env_var = "GEMINI_API_KEY"
-            token = questionary.password(f"Enter Google Gemini API Key:", style=custom_style).ask()
-            if token:
-                os.environ[api_key_env_var] = token
-                save_to_env(api_key_env_var, token)
-        elif not provider.startswith("ollama/") and "nvidia" not in provider.lower() and "gpt-oss" not in provider.lower() and "minimax" not in provider.lower() and "z-ai" not in provider.lower():
-            token = questionary.password(f"Enter API Token for {provider}:", style=custom_style).ask()
+def show_skill_grid(preselected: list[str] = None):
+    skills = _load_skill_catalog()
+    if not skills:
+        warn("No se pudo cargar el catálogo de skills.")
+        return
 
-    # Channel Selection (100+)
-    channels = [
-        questionary.Separator("--- Top Messaging ---"),
-        Choice("Telegram (Bot API)", "telegram"),
-        Choice("WhatsApp (QR link / Playwright)", "whatsapp"),
-        Choice("Discord (Bot API)", "discord"),
-        Choice("Slack (Socket Mode)", "slack"),
-        Choice("Microsoft Teams (Bot Framework)", "teams"),
-        questionary.Separator("--- Secure / Decentralized ---"),
-        Choice("Signal (signal-cli)", "signal"),
-        Choice("Matrix (plugin)", "matrix"),
-        Choice("Nostr (NIP-04 DMs)", "nostr"),
-        Choice("Session (Decentralized)", "session"),
-        Choice("Threema", "threema"),
-        Choice("Tlon (Urbit)", "tlon"),
-        questionary.Separator("--- Enterprise & Self-Hosted ---"),
-        Choice("Mattermost (plugin)", "mattermost"),
-        Choice("Nextcloud Talk (self-hosted)", "nextcloud"),
-        Choice("Google Chat (Chat API)", "google_chat"),
-        Choice("Zulip", "zulip"),
-        Choice("Rocket.Chat", "rocketchat"),
-        questionary.Separator("--- Social Media Platforms ---"),
-        Choice("X / Twitter (API v2)", "twitter"),
-        Choice("Instagram (Graph API)", "instagram"),
-        Choice("Facebook Messenger", "messenger"),
-        Choice("LinkedIn", "linkedin"),
-        Choice("Reddit", "reddit"),
-        Choice("TikTok (Desktop Automation)", "tiktok"),
-        Choice("YouTube (Content API)", "youtube"),
-        Choice("Twitch (Chat IRC)", "twitch"),
-        Choice("Pinterest", "pinterest"),
-        Choice("Snapchat", "snapchat"),
-        questionary.Separator("--- Regional / Specialized ---"),
-        Choice("iMessage (BlueBubbles macOS app)", "imessage"),
-        Choice("LINE (Messaging API)", "line"),
-        Choice("Zalo (Bot API)", "zalo"),
-        Choice("Zalo (Personal Account)", "zalo_personal"),
-        Choice("WeChat", "wechat"),
-        Choice("KakaoTalk", "kakaotalk"),
-        Choice("Viber", "viber"),
-        Choice("VKontakte (VK)", "vk"),
-        Choice("Skype", "skype"),
-        Choice("Kik", "kik"),
-        Choice("GroupMe", "groupme"),
-        Choice("ICQ", "icq"),
-        questionary.Separator("--- Protocols & SMS ---"),
-        Choice("Email (SMTP/IMAP)", "email"),
-        Choice("SMS (Twilio)", "twilio"),
-        Choice("SMS (Vonage/Nexmo)", "vonage"),
-        Choice("SMS (MessageBird)", "messagebird"),
-        Choice("IRC (Internet Relay Chat)", "irc"),
-        Choice("XMPP / Jabber", "xmpp"),
-        Choice("Generic Webhook", "webhook"),
-    ]
+    by_cat = {}
+    for s in skills:
+        by_cat.setdefault(s["category"], []).append(s)
 
-    # Add remaining to reach ~100 to look completely overwhelming and epic
-    extra_networks = [
-        "Bandwidth SMS", "Plivo SMS", "Sinch SMS", "Telnyx SMS", "Amazon SNS", 
-        "Pushbullet", "Pushover", "Gotify", "Briar", "Jami", "Tox", "Dust", 
-        "Status", "Ring", "Twinme", "Utopia", "Berty", "Cwtch", "Air2Web", 
-        "BICS", "Clickatell", "Gupshup", "Infobip", "Kaleyra", "RouteMobile", 
-        "Soprano", "Telesign", "Textmagic", "Tyntec", "Vibconnect", "Wavy", 
-        "Zenvia", "3Cinteractive", "Discord Webhooks", "Slack Webhooks",
-        "Trello", "Asana", "Jira", "Monday", "ClickUp", "Notion", "Linear",
-        "Zendesk", "Intercom", "Freshdesk", "HubSpot", "Salesforce", "ServiceNow"
-    ]
-    
-    channels.append(questionary.Separator("--- Integrations & CRMs ---"))
-    for net in extra_networks:
-        channels.append(Choice(net, net.lower().replace(" ", "_")))
+    rows = []
+    for cat, items in sorted(by_cat.items()):
+        names = ", ".join(s["name"] for s in items[:5])
+        if len(items) > 5:
+            names += f" … [+{len(items)-5}]"
+        n_tools = sum(len(s.get("tools", [])) for s in items)
+        icon = items[0].get("icon", "🧩")
+        rows.append((f"{icon} {cat}", names, n_tools))
 
-    channel = questionary.select(
-        "Select channel (QuickStart):",
-        choices=channels,
-        style=custom_style,
-        use_indicator=True,
-        pointer="♦"
-    ).ask()
-
-    if not channel:
-        print(f"{Fore.RED}Setup aborted.{Style.RESET_ALL}")
-        sys.exit(0)
-
-    # Channel Auth Prompt
-    if channel == "telegram":
-        channel_token = questionary.password("Enter Telegram Bot Token:", style=custom_style).ask()
-    elif channel == "whatsapp":
-        print(f"{Fore.YELLOW}WhatsApp will generate a QR code on the Dashboard for linkage.{Style.RESET_ALL}")
-        channel_token = "qr_pending"
-    else:
-        channel_token = questionary.password(f"Enter credentials/webhook for {channel}:", style=custom_style).ask()
-
-    # Guardar config de manera persistente en .env
-    os.environ["AUTOMYX_MODEL"] = provider or "nvidia/gpt-oss-120b"
-    save_to_env("AUTOMYX_MODEL", os.environ["AUTOMYX_MODEL"])
-    
-    if channel == "telegram" and channel_token and channel_token != "qr_pending":
-        os.environ["TELEGRAM_BOT_TOKEN"] = channel_token
-        save_to_env("TELEGRAM_BOT_TOKEN", channel_token)
-
-    # Generate QuickStart Summary
-    print("\n")
-    summary_text = (
-        f"[bold cyan]Gateway port:[/bold cyan] {config.get('gateway.port', 3500)}\n"
-        f"[bold cyan]Gateway bind:[/bold cyan] Loopback ({config.get('gateway.host', '0.0.0.0')})\n"
-        f"[bold cyan]Gateway auth:[/bold cyan] Token (default)\n"
-        f"[bold cyan]Selected Model:[/bold cyan] {provider}\n"
-        f"[bold cyan]Selected Channel:[/bold cyan] {channel.capitalize()}\n"
-        f"[bold cyan]Direct to chat channels.[/bold cyan]"
+    skill_table(
+        rows,
+        title=f"🧩 Skill Marketplace · {len(skills)} skills · {len(by_cat)} categories",
     )
-    console.print(Panel(summary_text, title="[bold cyan]QuickStart Configured[/bold cyan]", border_style="cyan", padding=(1, 2)))
-    
-    print(f"\n{Fore.GREEN}✅ Configuración guardada exitosamente. Automyx está listo para dominar.{Style.RESET_ALL}")
-    
-    # Preguntar si quiere iniciar el servidor automáticamente
-    start_now = questionary.confirm(
-        "Do you want to start the Automyx Gateway & Bots now?", 
-        default=True, 
-        style=custom_style
+    if RICH_AVAILABLE and console is not None:
+        console.print("")
+
+
+# ============================================================================
+# STEP 1 — Welcome + Security
+# ============================================================================
+def step1_welcome() -> bool:
+    show_banner(subtitle=f"Core {AUTOMYX_VERSION} · {AUTOMYX_CODENAME} · The Intent-Aware Engine")
+
+    sec_text = (
+        "Automyx can run shell commands, read/write files, control your mouse & keyboard, "
+        "browse the web, send messages, and operate any desktop app on your behalf.\n\n"
+        "It uses an Intent Engine that understands slang and typos in 30+ languages, "
+        "and a Multi-Task Dispatcher that runs 6 requests in parallel.\n\n"
+        "If you're new, start with [bold]sandbox mode[/] + the least skills you need. "
+        "You can always enable more from the dashboard later.\n\n"
+        f"[{GRAY}]Docs: https://github.com/NEXORATECHNOLOGYCEO/AUTOMYX-2.5[/]"
+    )
+    glass_panel("🛡  Security · Please Read", sec_text, accent=WARN)
+
+    if not QUESTIONARY_AVAILABLE:
+        warn("questionary not installed — running in non-interactive mode")
+        return True
+
+    ok_continue = questionary.confirm(
+        "I understand this is powerful and inherently risky. Continue?",
+        default=True,
+        style=automyx_style(),
     ).ask()
-    
-    if start_now:
-        print(f"\n{Fore.GREEN}🚀 Booting up Automyx Core...{Style.RESET_ALL}")
-        import subprocess
-        
-        # Flags para abrir en ventanas nuevas si estamos en Windows
-        creationflags = subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0
-        
-        # Iniciar API Gateway en una ventana separada
-        subprocess.Popen([sys.executable, "api/main.py"], creationflags=creationflags)
-        
-        # Iniciar Telegram Bot en otra ventana si el token existe
-        if os.environ.get("TELEGRAM_BOT_TOKEN"):
-            print(f"{Fore.GREEN}📱 Booting Telegram Bridge...{Style.RESET_ALL}")
-            subprocess.Popen([sys.executable, "telegram_bot.py"], creationflags=creationflags)
-            
-        print(f"\n{Fore.CYAN}✅ All systems GO! Dashboard available at http://localhost:3500{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}You can now close this setup window.{Style.RESET_ALL}")
+    if not ok_continue:
+        warn("Setup aborted by user.")
         sys.exit(0)
+    return True
+
+
+# ============================================================================
+# STEP 2 — Pick LLM
+# ============================================================================
+def step2_pick_llm() -> str:
+    show_step_header(2, 6, "Pick your AI model", "Local = private · Cloud = faster · Switch anytime")
+
+    local_choices = []
+    try:
+        from core.agent import OllamaManager
+        models = OllamaManager.list_models() or []
+        for m in models:
+            name = m.get("name", "unknown")
+            local_choices.append(Choice(f"🦙 {name} · LOCAL · $0", f"ollama/{name}"))
+    except Exception:
+        pass
+
+    choices = [
+        Separator(f"[{BLUE}]── Cloud (high-performance) ──[/]"),
+        Choice("⚡ GPT-OSS-120b · NVIDIA API · default", "openai/gpt-oss-120b"),
+        Choice("🧠 GLM-5.1 · NVIDIA API", "z-ai/glm-5.1"),
+        Choice("🌐 MiniMax-m2.7 · NVIDIA API", "minimaxai/minimax-m2.7"),
+        Separator(f"[{BLUE}]── Commercial APIs ──[/]"),
+        Choice("🅞 OpenAI · GPT-4o / o1", "openai/gpt-4o"),
+        Choice("🅐 Anthropic · Claude 3.5 Sonnet", "anthropic/claude-3-5-sonnet-20240620"),
+        Choice("🅖 Google · Gemini 1.5 Pro", "google/gemini-1.5-pro"),
+        Choice("🅖 Groq · LPU inference", "groq"),
+        Choice("🅜 Mistral AI", "mistral"),
+    ]
+    if local_choices:
+        choices.insert(0, Separator(f"[{BLUE}]── Local (Ollama detected) ──[/]"))
+        for c in local_choices:
+            choices.insert(1, c)
+
+    return questionary.select(
+        "Model/auth provider:",
+        choices=choices,
+        style=automyx_style(),
+        use_indicator=True,
+        pointer="◆",
+    ).ask() or "openai/gpt-oss-120b"
+
+
+# ============================================================================
+# STEP 3 — Pick channel
+# ============================================================================
+def step3_pick_channel() -> str:
+    show_step_header(3, 6, "Pick a chat channel", "Optional — you can add more later from the dashboard")
+
+    choices = [
+        Separator(f"[{BLUE}]── Top messaging ──[/]"),
+        Choice("✈  Telegram (Bot API)", "telegram"),
+        Choice("🟢 WhatsApp (QR · Playwright)", "whatsapp"),
+        Choice("💬 Discord (Bot API)", "discord"),
+        Choice("🔷 Slack (Socket Mode)", "slack"),
+        Choice("🟦 Microsoft Teams", "teams"),
+        Separator(f"[{BLUE}]── Knowledge & PM ──[/]"),
+        Choice("📚 Notion (Bot · API v1)", "notion"),
+        Choice("📓 Obsidian (Local Vault)", "obsidian"),
+        Choice("🗂  Trello / Asana / Jira / Linear", "pm_tools"),
+        Separator(f"[{BLUE}]── Social ──[/]"),
+        Choice("𝕏  X / Twitter", "twitter"),
+        Choice("📷 Instagram (Graph API)", "instagram"),
+        Choice("📘 Facebook Messenger", "messenger"),
+        Choice("💼 LinkedIn", "linkedin"),
+        Choice("📌 Reddit", "reddit"),
+        Choice("🎵 TikTok (Desktop)", "tiktok"),
+        Choice("▶  YouTube (Content API)", "youtube"),
+        Choice("🎮 Twitch", "twitch"),
+        Separator(f"[{BLUE}]── Regional ──[/]"),
+        Choice("🇪🇸 iMessage · LINE · WeChat · KakaoTalk · Viber · VK", "regional"),
+        Separator(f"[{BLUE}]── Skip for now ──[/]"),
+        Choice("⏭  Skip · I'll use the Web dashboard only", "skip"),
+    ]
+    return questionary.select(
+        "Primary channel:",
+        choices=choices,
+        style=automyx_style(),
+        use_indicator=True,
+        pointer="◆",
+    ).ask() or "skip"
+
+
+# ============================================================================
+# STEP 4 — Multi-select skills
+# ============================================================================
+STARTER_KIT = {
+    "ai-ml-engineer", "prompt-engineer", "fullstack-developer",
+    "memory-rag-vector", "skill-forger", "data-scientist",
+    "content-factory", "copywriter", "seo-expert",
+    "browser-stealth-rpa", "pdf-professional-creator",
+}
+
+
+def step4_pick_skills() -> list[str]:
+    show_step_header(4, 6, "Pick the skills you want",
+                     "Space to toggle · Enter to confirm · recommended: start small")
+
+    skills = _load_skill_catalog()
+    if not skills:
+        warn("No se pudo cargar el catálogo de skills.")
+        return []
+
+    show_skill_grid()
+
+    by_cat: dict[str, list] = {}
+    for s in skills:
+        by_cat.setdefault(s["category"], []).append(s)
+
+    choices = []
+    for cat, items in sorted(by_cat.items()):
+        icon = items[0].get("icon", "🧩")
+        choices.append(Separator(f"[{BLUE}]── {icon} {cat} ({len(items)} skills) ──[/]"))
+        for s in items:
+            checked = s["name"] in STARTER_KIT
+            mark = "★" if checked else " "
+            desc = s.get("description", "")[:55]
+            label = f"{mark} {s['name']:<28}  {GRAY}{desc}[/]"
+            choices.append(Choice(title=label, value=s["name"], checked=checked))
+
+    choices.insert(0, Separator(f"[{BLUE}]── Tips ──[/]"))
+    choices.insert(
+        1,
+        Choice(
+            title=f"[{GLOW}]💡 Starter kit preselected (★). Space to toggle, Enter to confirm.[/]",
+            value="__tip__",
+            disabled=True,
+        ),
+    )
+
+    selected = questionary.checkbox(
+        "Toggle the skills you want enabled:",
+        choices=choices,
+        style=automyx_style(),
+        validate=lambda sel: True,
+    ).ask() or []
+
+    return [s for s in selected if not s.startswith("__")]
+
+
+# ============================================================================
+# STEP 5 — Integrations
+# ============================================================================
+INTEGRATIONS = [
+    {"id": "notion",     "name": "📚 Notion",
+     "env": "NOTION_API_KEY",     "ask": "Paste your Notion Internal Integration Secret (ntn_... or secret_...):",
+     "help_url": "https://www.notion.so/my-integrations"},
+    {"id": "github",     "name": "🐙 GitHub",
+     "env": "GITHUB_TOKEN",       "ask": "Paste a GitHub Personal Access Token (ghp_...):",
+     "help_url": "https://github.com/settings/tokens"},
+    {"id": "elevenlabs", "name": "🗣  ElevenLabs (TTS)",
+     "env": "ELEVENLABS_API_KEY", "ask": "Paste your ElevenLabs API key:",
+     "help_url": "https://elevenlabs.io/app/settings/api-keys"},
+    {"id": "openai",     "name": "🅞 OpenAI (optional)",
+     "env": "OPENAI_API_KEY",     "ask": "Paste your OpenAI API key (sk-...):",
+     "help_url": "https://platform.openai.com/api-keys"},
+    {"id": "anthropic",  "name": "🅐 Anthropic (optional)",
+     "env": "ANTHROPIC_API_KEY",  "ask": "Paste your Anthropic API key (sk-ant-...):",
+     "help_url": "https://console.anthropic.com/settings/keys"},
+    {"id": "tavily",     "name": "🔍 Tavily (web search)",
+     "env": "TAVILY_API_KEY",     "ask": "Paste your Tavily API key:",
+     "help_url": "https://tavily.com"},
+]
+
+
+def step5_integrations() -> dict:
+    show_step_header(5, 6, "Integrations & API keys",
+                     "Optional — paste only the ones you use. Stored locally in .env")
+
+    picked = questionary.checkbox(
+        "Which integrations do you want to enable?",
+        choices=[Choice(i["name"], value=i["id"]) for i in INTEGRATIONS],
+        style=automyx_style(),
+    ).ask() or []
+
+    secrets = {}
+    for integ in INTEGRATIONS:
+        if integ["id"] not in picked:
+            continue
+        if RICH_AVAILABLE and console is not None:
+            console.print(
+                f"\n  [{CYAN}]{integ['name']}[/{CYAN}]  [{GRAY}]{integ['help_url']}[/{GRAY}]"
+            )
+        token = questionary.password(integ["ask"], style=automyx_style()).ask()
+        if token and token.strip():
+            secrets[integ["id"]] = {"env_var": integ["env"], "value": token.strip()}
+            os.environ[integ["env"]] = token.strip()
+            save_to_env(integ["env"], token.strip())
+            ok(f"{integ['env']} saved.")
+    return secrets
+
+
+# ============================================================================
+# STEP 6 — Confirm
+# ============================================================================
+def step6_confirm(state: dict) -> bool:
+    show_step_header(6, 6, "Review & launch", "Confirm your selection · you can change it later from the dashboard")
+
+    skills_str = ", ".join(state["skills"][:8])
+    if len(state["skills"]) > 8:
+        skills_str += f" … (+{len(state['skills'])-8})"
+    if not skills_str:
+        skills_str = f"[{WARN}]none selected (use only the base toolset)[/]"
+
+    integ_str = ", ".join(state["integrations"].keys()) or f"[{GRAY}]none[/]"
+
+    summary = (
+        f"[{CYAN}]LLM model[/]            {state['model']}\n"
+        f"[{CYAN}]Channel[/]              {state['channel']}\n"
+        f"[{CYAN}]Skills enabled[/]       {len(state['skills'])} → {skills_str}\n"
+        f"[{CYAN}]Integrations[/]         {integ_str}\n"
+        f"[{CYAN}]Gateway port[/]         {config.get('gateway.port', 3500) if config else 3500}\n"
+        f"[{CYAN}]Persistence[/]          state/onboard_state.json + state/automyx.sqlite"
+    )
+    glass_panel("📋  Configuration Summary", summary, accent=CYAN)
+
+    return questionary.confirm("Save & finish?", default=True, style=automyx_style()).ask() or False
+
+
+# ============================================================================
+# Main
+# ============================================================================
+def run_onboarding():
+    if not step1_welcome():
+        return
+    show_skill_grid()
+
+    # Step 2
+    model = step2_pick_llm()
+    os.environ["AUTOMYX_MODEL"] = model
+    save_to_env("AUTOMYX_MODEL", model)
+    if model.startswith("openai/gpt-4") or model == "openai/gpt-4o":
+        k = questionary.password("Enter OpenAI API Key (sk-...):", style=automyx_style()).ask()
+        if k:
+            os.environ["OPENAI_API_KEY"] = k
+            save_to_env("OPENAI_API_KEY", k)
+    elif model.startswith("anthropic/"):
+        k = questionary.password("Enter Anthropic API Key (sk-ant-...):", style=automyx_style()).ask()
+        if k:
+            os.environ["ANTHROPIC_API_KEY"] = k
+            save_to_env("ANTHROPIC_API_KEY", k)
+    elif model.startswith("google/"):
+        k = questionary.password("Enter Google Gemini API Key:", style=automyx_style()).ask()
+        if k:
+            os.environ["GEMINI_API_KEY"] = k
+            save_to_env("GEMINI_API_KEY", k)
+
+    # Step 3
+    channel = step3_pick_channel()
+    if channel == "telegram":
+        k = questionary.password("Enter Telegram Bot Token:", style=automyx_style()).ask()
+        if k:
+            os.environ["TELEGRAM_BOT_TOKEN"] = k
+            save_to_env("TELEGRAM_BOT_TOKEN", k)
+
+    # Step 4
+    skills = step4_pick_skills()
+    ok(f"{len(skills)} skill(s) selected.")
+
+    # Step 5
+    integrations = step5_integrations()
+
+    # Step 6
+    state = {
+        "model": model,
+        "channel": channel,
+        "skills": skills,
+        "integrations": integrations,
+        "version": AUTOMYX_VERSION,
+        "wizard_run_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    if not step6_confirm(state):
+        warn("Setup cancelled. Re-run with: python automix.py onboard")
+        return
+
+    save_state(state)
+
+    closing = (
+        f"✅ Automyx is configured.\n\n"
+        f"  • Model:    {model}\n"
+        f"  • Channel:  {channel}\n"
+        f"  • Skills:   {len(skills)} enabled\n"
+        f"  • Tokens:   {len(integrations)} integration(s)\n\n"
+        f"Run [bold {CYAN}]python automix.py gateway[/] to start the dashboard at "
+        f"[bold]http://localhost:3500[/]"
+    )
+    glass_panel("🚀  Automyx is ready", closing, accent=OK)
+
+    if questionary.confirm("Start the gateway + Telegram bot now?",
+                            default=True, style=automyx_style()).ask():
+        import subprocess
+        creationflags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
+        subprocess.Popen([sys.executable, "api/main.py"], creationflags=creationflags)
+        if os.environ.get("TELEGRAM_BOT_TOKEN"):
+            subprocess.Popen([sys.executable, "telegram_bot.py"], creationflags=creationflags)
+        ok("Gateway + Telegram booted.")
+        info("Close this window and open http://localhost:3500")
     else:
-        print(f"{Fore.CYAN}➜ Puedes iniciar el servidor manualmente con:{Style.RESET_ALL} python automix.py gateway\n")
+        info("Start later with:  python automix.py gateway")
+
+
+# ============================================================================
+# Backwards-compat exports
+# ============================================================================
+def show_skills_catalog():
+    show_skill_grid()
+
+
+def show_capabilities_summary():
+    skills = _load_skill_catalog()
+    by_cat = {}
+    for s in skills:
+        by_cat.setdefault(s["category"], []).append(s)
+    if not RICH_AVAILABLE or console is None:
+        print(f"Skill categories: {len(by_cat)}")
+        print(f"Skills in catalog: {len(skills)}")
+        return
+    t = Table(title="[bold]Capabilities Summary[/]",
+              box=rich_box.SIMPLE, border_style=BLUE,
+              header_style=f"bold {CYAN}")
+    t.add_column("Capability", style=CYAN)
+    t.add_column("Count", style=GLOW, justify="right")
+    t.add_row("Skill categories", str(len(by_cat)))
+    t.add_row("Skills in catalog", str(len(skills)))
+    t.add_row("Intents recognized", "30+")
+    t.add_row("Tool aliases", "12,606")
+    t.add_row("Multi-task workers", "6")
+    console.print(t)
+
 
 if __name__ == "__main__":
     run_onboarding()

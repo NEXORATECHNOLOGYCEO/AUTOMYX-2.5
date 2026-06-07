@@ -1,6 +1,8 @@
 import os
 import sys
 import io
+import base64
+import tempfile
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -97,7 +99,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Maneja los mensajes de texto entrantes y los envía al Gateway de Automyx"""
-    user_msg = update.message.text
+    user_msg = update.message.text or ""
     chat_id = str(update.message.chat_id)
     user_name = update.effective_user.first_name
 
@@ -154,6 +156,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Recuperar el modelo elegido por el usuario, si lo hay
         selected_model = USER_MODELS.get(str(update.effective_user.id), None)
 
+        # Detectar si el mensaje incluye imágenes
+        images_payload = []
+        try:
+            if update.message.photo:
+                # Telegram envía varias resoluciones; tomamos la mayor
+                photo = update.message.photo[-1]
+                file = await context.bot.get_file(photo.file_id)
+                buf = await file.download_as_bytearray()
+                images_payload.append({
+                    "data": "data:image/jpeg;base64," + base64.b64encode(bytes(buf)).decode("ascii"),
+                    "mime": "image/jpeg",
+                })
+                user_msg = (user_msg + "\n\n[El usuario adjuntó 1 foto]").strip()
+            elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith("image/"):
+                doc = update.message.document
+                file = await context.bot.get_file(doc.file_id)
+                buf = await file.download_as_bytearray()
+                images_payload.append({
+                    "data": f"data:{doc.mime_type};base64," + base64.b64encode(bytes(buf)).decode("ascii"),
+                    "mime": doc.mime_type,
+                })
+                user_msg = (user_msg + f"\n\n[El usuario adjuntó imagen: {doc.file_name or 'archivo'}]").strip()
+        except Exception as e:
+            print(f"{Fore.YELLOW}[Telegram] no se pudo descargar imagen: {e}{Style.RESET_ALL}")
+
         payload = {
             "channel": "telegram",
             "sender_id": chat_id,
@@ -161,6 +188,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "agent_id": "main",
             "model": selected_model,
         }
+        if images_payload:
+            payload["images"] = images_payload
 
         # Hacemos la petición al Gateway de Automyx
         response = requests.post(GATEWAY_URL, json=payload, headers=headers, timeout=180)
@@ -271,6 +300,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"{Fore.RED}[Telegram] {error_msg}\n{tb}{Style.RESET_ALL}")
 
 
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler dedicado para fotos sin texto adjunto."""
+    if not update.message.caption:
+        # Sin caption: tratamos como "describe esta imagen"
+        update.message.text = "[El usuario envió una imagen sin texto]"
+    await handle_message(update, context)
+
+
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /status: muestra el estado del gateway y del agente"""
     gw_token = get_gateway_token()
@@ -330,6 +367,11 @@ def main():
     application.add_handler(CommandHandler("model", model_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CallbackQueryHandler(button_callback))
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(MessageHandler(
+        filters.Document.ALL & ~filters.COMMAND,
+        handle_message,
+    ))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Iniciar el bot

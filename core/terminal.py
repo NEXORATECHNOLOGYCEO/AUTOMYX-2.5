@@ -1,10 +1,15 @@
 """
 AUTOMYX TERMINAL UI v2.0
 ========================
-Wrapper sobre Rich que da a TODO el output del agente un look profesional:
+Wrapper sobre Rich que da a TODO el output del agente un look profesional.
+Refactored to consume the shared design system in `core.ui.py` (electric blue
+glassmorphism). Public API preserved for backward compatibility — but new
+code should import colors and helpers directly from `core.ui`.
+
+Provides:
 - Banners animados
 - Spinners con contexto
-- Paneles con borde neón cyan
+- Paneles con borde electric-blue
 - Trees jerárquicos
 - Tablas con resaltado
 - Progress bars
@@ -23,6 +28,18 @@ import logging
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Iterable
 
+# Reuse the brand palette and shared console from core.ui
+try:
+    from core.ui import (
+        NAVY, DEEP_BLUE, BLUE, ELECTRIC, CYAN, GLOW, WHITE, GRAY, DIM,
+        WARN, OK, ERR, PURPLE, RICH_AVAILABLE, console as _shared_console,
+    )
+except Exception:
+    RICH_AVAILABLE = False
+    _shared_console = None
+    NAVY = DEEP_BLUE = BLUE = ELECTRIC = CYAN = GLOW = WHITE = GRAY = DIM = ""
+    WARN = OK = ERR = PURPLE = ""
+
 try:
     from rich.console import Console
     from rich.panel import Panel
@@ -39,7 +56,7 @@ try:
     from rich.align import Align
     from rich import box as rich_box
     from rich.markup import escape as _rich_escape
-    RICH_AVAILABLE = True
+    RICH_AVAILABLE = RICH_AVAILABLE or True
 except ImportError:
     RICH_AVAILABLE = False
 
@@ -51,14 +68,16 @@ except ImportError:
     COLORAMA_AVAILABLE = False
 
 
-# Colores de marca AUTOMYX
-BRAND_CYAN = "bright_cyan"
-BRAND_MAGENTA = "bright_magenta"
-BRAND_YELLOW = "bright_yellow"
-BRAND_GREEN = "bright_green"
-BRAND_RED = "bright_red"
-BRAND_GRAY = "bright_black"
-BRAND_BLUE = "bright_blue"
+# Backward-compat alias mapping — old BRAND_* constants now point to the new
+# electric-blue palette. Existing code (core.agent, core.onboard_pro, etc.)
+# continues to import these names; visual identity is consistent with `core.ui`.
+BRAND_CYAN    = CYAN
+BRAND_MAGENTA = PURPLE
+BRAND_YELLOW  = WARN
+BRAND_GREEN   = OK
+BRAND_RED     = ERR
+BRAND_GRAY    = GRAY
+BRAND_BLUE    = BLUE
 
 ASCII_LOGO = """
     █████╗ ██╗   ██╗████████╗ ██████╗ ███╗   ███╗██╗   ██╗██╗  ██╗
@@ -108,7 +127,9 @@ def _detect_console() -> "Console":
     )
 
 
-console = _detect_console()
+# Prefer the shared console from `core.ui` so all surfaces draw with the same
+# color_system and encoding. Fallback to a local one if Rich is missing.
+console = _shared_console if (_shared_console is not None) else _detect_console()
 
 
 # ---------------------------------------------------------------------------

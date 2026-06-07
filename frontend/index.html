@@ -21,7 +21,9 @@
                         textMuted: '#8b949e'
                     },
                     boxShadow: {
-                        'neon-cyan': '0 0 15px rgba(0, 240, 255, 0.4)',
+                        'neon-cyan': '0 0 15px rgba(0, 170, 255, 0.45)',
+                        'neon-blue': '0 0 20px rgba(0, 170, 255, 0.5)',
+                        'neon-purple': '0 0 18px rgba(155, 107, 255, 0.4)',
                         'neon-red': '0 0 15px rgba(255, 0, 60, 0.4)',
                     }
                 }
@@ -34,18 +36,19 @@
         :root {
             --bg-color: #050507;
             --panel-color: rgba(15, 20, 30, 0.65);
-            --border-color: rgba(0, 240, 255, 0.15);
+            --border-color: rgba(0, 170, 255, 0.18);
             --text-color: #e2e8f0;
-            --primary-color: #00f0ff;
+            --primary-color: #00AAFF;
         }
 
-        body { 
-            background-color: var(--bg-color); 
-            color: var(--text-color); 
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
             font-family: 'Inter', sans-serif;
-            background-image: 
-                radial-gradient(circle at 15% 50%, rgba(0, 240, 255, 0.08), transparent 25%),
-                radial-gradient(circle at 85% 30%, rgba(255, 0, 60, 0.08), transparent 25%);
+            background-image:
+                radial-gradient(circle at 15% 50%, rgba(0, 170, 255, 0.08), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(155, 107, 255, 0.08), transparent 25%),
+                radial-gradient(circle at 50% 90%, rgba(30, 95, 190, 0.06), transparent 30%);
             background-attachment: fixed;
             overflow: hidden;
             transition: background-color 0.3s, color 0.3s;
@@ -384,16 +387,196 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        /* ===================================================================
+           3D WELCOME SCREEN — Glassmorphism electric blue
+           Appears on page load with 3D card + particles + fade-in.
+           Auto-dismisses after 4s or on click.
+           =================================================================== */
+        #welcome-screen {
+            position: fixed; inset: 0; z-index: 9999;
+            background:
+                radial-gradient(ellipse at 30% 20%, rgba(0, 170, 255, 0.12), transparent 50%),
+                radial-gradient(ellipse at 70% 80%, rgba(123, 213, 255, 0.10), transparent 50%),
+                radial-gradient(ellipse at 50% 50%, rgba(11, 37, 69, 0.85), #050810 80%);
+            display: flex; align-items: center; justify-content: center;
+            perspective: 1500px;
+            transition: opacity 0.8s ease, visibility 0.8s ease;
+        }
+        #welcome-screen.dismissed { opacity: 0; visibility: hidden; pointer-events: none; }
+
+        /* Floating particles in background */
+        .welcome-particle {
+            position: absolute; width: 4px; height: 4px;
+            background: #00AAFF; border-radius: 50%;
+            box-shadow: 0 0 12px #00AAFF, 0 0 24px rgba(0, 170, 255, 0.5);
+            opacity: 0; animation: particle-float 6s ease-in-out infinite;
+        }
+        @keyframes particle-float {
+            0%, 100% { opacity: 0; transform: translateY(0) scale(0.5); }
+            50%      { opacity: 0.9; transform: translateY(-120px) scale(1); }
+        }
+
+        /* The 3D card */
+        .welcome-card {
+            position: relative;
+            width: min(92vw, 480px);
+            padding: 3rem 2.5rem 2.5rem;
+            background: linear-gradient(135deg,
+                rgba(11, 37, 69, 0.55) 0%,
+                rgba(10, 26, 47, 0.75) 100%);
+            backdrop-filter: blur(24px) saturate(180%);
+            -webkit-backdrop-filter: blur(24px) saturate(180%);
+            border: 1px solid rgba(0, 170, 255, 0.35);
+            border-radius: 24px;
+            box-shadow:
+                0 30px 80px -20px rgba(0, 170, 255, 0.45),
+                0 0 0 1px rgba(123, 213, 255, 0.1) inset,
+                0 0 60px rgba(0, 170, 255, 0.15) inset;
+            text-align: center;
+            transform-style: preserve-3d;
+            animation: card-3d-enter 1.4s cubic-bezier(0.16, 1, 0.3, 1) forwards,
+                       card-3d-float 6s ease-in-out 1.4s infinite;
+            opacity: 0;
+        }
+        @keyframes card-3d-enter {
+            0%   { opacity: 0; transform: rotateY(-90deg) rotateX(20deg) translateZ(-400px) scale(0.6); }
+            60%  { opacity: 1; transform: rotateY(8deg) rotateX(-4deg) translateZ(40px) scale(1.02); }
+            100% { opacity: 1; transform: rotateY(0deg) rotateX(0deg) translateZ(0) scale(1); }
+        }
+        @keyframes card-3d-float {
+            0%, 100% { transform: translateY(0) rotateX(0deg) rotateY(0deg); }
+            50%      { transform: translateY(-10px) rotateX(2deg) rotateY(-2deg); }
+        }
+
+        /* Glowing 3D logo */
+        .welcome-logo {
+            width: 88px; height: 88px; margin: 0 auto 1.5rem;
+            border-radius: 22px;
+            background: linear-gradient(135deg, #00AAFF 0%, #1E5FBE 50%, #9B6BFF 100%);
+            display: flex; align-items: center; justify-content: center;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 2.6rem; font-weight: 700;
+            color: #E6F2FF;
+            box-shadow:
+                0 0 30px rgba(0, 170, 255, 0.6),
+                0 0 60px rgba(0, 170, 255, 0.35),
+                0 8px 32px rgba(0, 0, 0, 0.4),
+                inset 0 -4px 8px rgba(0, 0, 0, 0.2);
+            position: relative;
+            transform: translateZ(60px);
+            animation: logo-pulse 3s ease-in-out infinite;
+        }
+        .welcome-logo::after {
+            content: ''; position: absolute; inset: -3px;
+            border-radius: 24px;
+            background: linear-gradient(135deg, #00E5FF, #9B6BFF, #00AAFF);
+            z-index: -1; filter: blur(14px); opacity: 0.6;
+        }
+        @keyframes logo-pulse {
+            0%, 100% { box-shadow: 0 0 30px rgba(0, 170, 255, 0.6), 0 0 60px rgba(0, 170, 255, 0.35), inset 0 -4px 8px rgba(0, 0, 0, 0.2); }
+            50%      { box-shadow: 0 0 50px rgba(0, 170, 255, 0.8), 0 0 90px rgba(0, 170, 255, 0.5), inset 0 -4px 8px rgba(0, 0, 0, 0.2); }
+        }
+
+        .welcome-title {
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 2.6rem; font-weight: 700; letter-spacing: 0.12em;
+            color: #E6F2FF;
+            margin: 0 0 0.4rem;
+            text-shadow: 0 0 24px rgba(0, 170, 255, 0.5);
+            transform: translateZ(40px);
+        }
+        .welcome-subtitle {
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 0.95rem; font-weight: 500;
+            color: #7BD5FF; letter-spacing: 0.35em; text-transform: uppercase;
+            margin: 0 0 1.8rem;
+            transform: translateZ(30px);
+        }
+        .welcome-divider {
+            width: 60%; height: 1px; margin: 0 auto 1.6rem;
+            background: linear-gradient(90deg, transparent, #00AAFF, transparent);
+            transform: translateZ(20px);
+        }
+        .welcome-creator {
+            font-size: 0.78rem; color: #6A89B5;
+            letter-spacing: 0.2em; text-transform: uppercase;
+            margin: 0 0 0.4rem;
+            transform: translateZ(20px);
+        }
+        .welcome-creator-name {
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 1.05rem; font-weight: 600;
+            color: #E6F2FF;
+            margin: 0 0 0.2rem;
+            text-shadow: 0 0 16px rgba(0, 170, 255, 0.3);
+            transform: translateZ(30px);
+        }
+        .welcome-version {
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 0.75rem; color: #6A89B5;
+            letter-spacing: 0.3em; margin: 1.2rem 0 0;
+            transform: translateZ(10px);
+        }
+        .welcome-cta {
+            margin-top: 1.8rem;
+            display: inline-flex; align-items: center; gap: 0.5rem;
+            padding: 0.7rem 1.6rem;
+            background: linear-gradient(135deg, rgba(0, 170, 255, 0.18), rgba(155, 107, 255, 0.18));
+            border: 1px solid rgba(0, 170, 255, 0.4);
+            border-radius: 12px;
+            color: #E6F2FF; font-family: 'Rajdhani', sans-serif;
+            font-size: 0.85rem; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            transform: translateZ(50px);
+        }
+        .welcome-cta:hover {
+            background: linear-gradient(135deg, rgba(0, 170, 255, 0.32), rgba(155, 107, 255, 0.32));
+            border-color: rgba(0, 229, 255, 0.7);
+            box-shadow: 0 0 28px rgba(0, 170, 255, 0.4);
+            transform: translateZ(50px) scale(1.04);
+        }
+        .welcome-cta .arrow { transition: transform 0.3s; }
+        .welcome-cta:hover .arrow { transform: translateX(4px); }
+        .welcome-hint {
+            font-size: 0.7rem; color: #6A89B5;
+            margin-top: 1rem; letter-spacing: 0.15em;
+            transform: translateZ(10px);
+        }
     </style>
 </head>
 <body class="flex h-screen overflow-hidden">
+
+    <!-- ===================================================================
+         3D WELCOME SCREEN — Glassmorphism electric blue
+         Auto-dismisses after 4.5s or on click. Particles float in bg.
+         =================================================================== -->
+    <div id="welcome-screen" aria-label="Welcome to Automyx">
+        <!-- Particles (generated by JS) -->
+        <div id="welcome-particles"></div>
+        <!-- 3D Card -->
+        <div class="welcome-card">
+            <div class="welcome-logo">A</div>
+            <h1 class="welcome-title">AUTOMYX</h1>
+            <p class="welcome-subtitle">The Intent-Aware Engine</p>
+            <div class="welcome-divider"></div>
+            <p class="welcome-creator">Crafted with precision by</p>
+            <p class="welcome-creator-name">Nexora Technology LLC</p>
+            <p class="welcome-version">v 2.5.0 · CORE BUILD 2026</p>
+            <button class="welcome-cta" onclick="dismissWelcome()">
+                Enter Gateway <span class="arrow">→</span>
+            </button>
+            <p class="welcome-hint">click anywhere or wait · auto-dismiss in 4.5s</p>
+        </div>
+    </div>
 
     <!-- SIDEBAR -->
     <aside id="sidebar" class="glass-sidebar w-64 flex flex-col flex-shrink-0 transition-colors duration-300 shadow-2xl z-20">
         <!-- Logo Area -->
         <div class="h-16 flex items-center justify-between px-6 border-b border-borderDark">
             <div class="flex items-center">
-                <img src="/assets/logo.png" alt="Automyx Logo" class="w-8 h-8 mr-3 rounded-lg shadow-[0_0_15px_rgba(0,240,255,0.4)] object-cover bg-black" onerror="console.error('Error cargando logo principal', this.src); this.src='https://ui-avatars.com/api/?name=A&background=00F0FF&color=000'">
+                <img src="/assets/logo.png" alt="Automyx Logo" class="w-8 h-8 mr-3 rounded-lg shadow-[0_0_15px_rgba(0,170,255,0.5)] object-cover bg-black" onerror="console.error('Error cargando logo principal', this.src); this.src='https://ui-avatars.com/api/?name=A&background=00AAFF&color=000'">
                 <div>
                     <h1 class="font-bold text-lg leading-tight tracking-wide font-rajdhani text-white">AUTOMYX <span class="text-[0.6rem] text-primary align-top"></span></h1>
                     <p class="text-[0.65rem] text-primary uppercase tracking-wider font-mono">Gateway Dashboard</p>
@@ -499,6 +682,16 @@
                 <i class="fas fa-bug w-6 text-center"></i>
                 <span class="text-sm">Depuración</span>
             </div>
+        </div>
+
+        <!-- Creator footer — Nexora Technology LLC -->
+        <div class="px-4 py-3 border-t border-borderDark text-center">
+            <div class="text-[0.6rem] uppercase tracking-[0.25em] text-gray-500 font-mono">crafted by</div>
+            <div class="text-[0.78rem] font-rajdhani font-semibold tracking-wider mt-0.5"
+                 style="background: linear-gradient(135deg, #7BD5FF 0%, #00AAFF 50%, #9B6BFF 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;">
+                NEXORA TECHNOLOGY LLC
+            </div>
+            <div class="text-[0.6rem] text-gray-600 font-mono mt-0.5">v2.5.0 · core 2026</div>
         </div>
     </aside>
 
@@ -751,7 +944,27 @@
         <div id="view-canales" class="view-section flex-1 p-8 overflow-y-auto">
             <h2 class="text-3xl font-bold mb-2 text-white">Canales de Comunicación</h2>
             <p class="text-textMuted text-sm mb-8">Vincula Automyx con tus cuentas para que pueda leer y enviar mensajes de forma autónoma.</p>
-            
+
+            <!-- Live state panel (auto-refreshes from /api/state/channels) -->
+            <div id="channels-live-state" class="mb-8 p-6 rounded-2xl border border-borderDark bg-panelDark/50 backdrop-blur-md shadow-xl">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                        <i class="fas fa-satellite-dish text-primary"></i>
+                        Estado en Vivo
+                    </h3>
+                    <span class="text-xs text-textMuted font-mono">auto-refresh · 5s</span>
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3" id="channels-live-grid">
+                    <div class="text-textMuted text-sm">Cargando...</div>
+                </div>
+                <div class="mt-5 pt-5 border-t border-borderDark">
+                    <h4 class="text-xs uppercase tracking-wider text-textMuted font-bold mb-3">Integraciones</h4>
+                    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3" id="integrations-live-grid">
+                        <div class="text-textMuted text-sm">Cargando...</div>
+                    </div>
+                </div>
+            </div>
+
             <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <!-- WhatsApp Card -->
                 <div class="bg-panelDark border-2 border-borderDark rounded-2xl p-8 flex flex-col items-center text-center shadow-lg transition-transform hover:scale-[1.02]">
@@ -1928,16 +2141,16 @@ C:\Users\Automyx>
                 '--active-border': 'rgba(37, 99, 235, 0.2)'
             },
             blue: {
-                '--bg-color': '#0f172a',
-                '--panel-color': '#1e293b',
-                '--border-color': '#334155',
-                '--text-color': '#cbd5e1',
-                '--text-bold': '#f8fafc',
-                '--muted-color': '#94a3b8',
-                '--primary-color': '#38bdf8',
-                '--hover-bg': 'rgba(56, 189, 248, 0.1)',
-                '--active-bg': 'rgba(56, 189, 248, 0.15)',
-                '--active-border': 'rgba(56, 189, 248, 0.3)'
+                '--bg-color': '#0A1A2F',
+                '--panel-color': '#0B2545',
+                '--border-color': 'rgba(0, 170, 255, 0.25)',
+                '--text-color': '#E6F2FF',
+                '--text-bold': '#FFFFFF',
+                '--muted-color': '#7BD5FF',
+                '--primary-color': '#00AAFF',
+                '--hover-bg': 'rgba(0, 170, 255, 0.1)',
+                '--active-bg': 'rgba(0, 170, 255, 0.18)',
+                '--active-border': 'rgba(0, 170, 255, 0.4)'
             }
         };
 
@@ -2070,7 +2283,15 @@ C:\Users\Automyx>
             } else {
                 document.getElementById('view-placeholder').classList.add('active');
             }
-            
+
+            // Start/stop live state polling per view
+            if (viewName === 'canales') startChannelsPolling();
+            else stopChannelsPolling();
+            if (viewName === 'catalogo') fetchCatalog();
+            if (viewName === 'multitask') fetchMultitask();
+            if (viewName === 'agent-status') startAgentStatusPolling();
+            else stopAgentStatusPolling();
+
             // Cerrar sidebar en móvil si está abierto
             if(window.innerWidth <= 768) {
                 toggleSidebar();
@@ -2327,6 +2548,81 @@ C:\Users\Automyx>
                 </details>
             `).join('');
             document.getElementById('cat-categories').innerHTML = html || `<p class="text-center text-textMuted py-8">Sin resultados para "${q}"</p>`;
+        }
+
+        // ===========================================================
+        // CHANNELS / INTEGRATIONS LIVE STATE
+        // ===========================================================
+        let _channelsTimer = null;
+        function _channelCard(ch) {
+            const dot = ch.running
+                ? '<span class="absolute top-2 right-2 w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.8)]"></span>'
+                : (ch.configured
+                    ? '<span class="absolute top-2 right-2 w-2 h-2 rounded-full bg-yellow-400"></span>'
+                    : '<span class="absolute top-2 right-2 w-2 h-2 rounded-full bg-gray-600"></span>');
+            const stateLabel = ch.running
+                ? '<span class="text-green-400 text-[0.65rem] uppercase font-bold tracking-wider">Running</span>'
+                : (ch.configured
+                    ? '<span class="text-yellow-400 text-[0.65rem] uppercase font-bold tracking-wider">Configured</span>'
+                    : '<span class="text-gray-500 text-[0.65rem] uppercase font-bold tracking-wider">Not set</span>');
+            const ring = ch.running
+                ? 'border-green-500/40 shadow-[0_0_20px_rgba(74,222,128,0.2)]'
+                : (ch.configured
+                    ? 'border-yellow-500/30'
+                    : 'border-borderDark opacity-60');
+            return `
+                <div class="relative p-3 rounded-xl border ${ring} bg-bgDark/40 backdrop-blur-sm transition-all hover:scale-[1.03]">
+                    ${dot}
+                    <div class="text-2xl mb-1">${ch.icon || '🔌'}</div>
+                    <div class="text-white text-xs font-bold truncate">${ch.name}</div>
+                    ${stateLabel}
+                </div>`;
+        }
+
+        function _integrationCard(integ) {
+            const dot = integ.configured
+                ? '<span class="absolute top-2 right-2 w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_rgba(0,170,255,0.8)]"></span>'
+                : '<span class="absolute top-2 right-2 w-2 h-2 rounded-full bg-gray-600"></span>';
+            const ring = integ.configured
+                ? 'border-primary/40 shadow-[0_0_14px_rgba(0,170,255,0.15)]'
+                : 'border-borderDark opacity-60';
+            const state = integ.configured
+                ? '<span class="text-primary text-[0.65rem] uppercase font-bold tracking-wider">Active</span>'
+                : '<span class="text-gray-500 text-[0.65rem] uppercase font-bold tracking-wider">Not set</span>';
+            return `
+                <div class="relative p-3 rounded-xl border ${ring} bg-bgDark/40 backdrop-blur-sm transition-all hover:scale-[1.03]">
+                    ${dot}
+                    <div class="text-2xl mb-1">${integ.icon || '🔗'}</div>
+                    <div class="text-white text-xs font-bold truncate">${integ.name}</div>
+                    ${state}
+                </div>`;
+        }
+
+        async function fetchChannelsState() {
+            try {
+                const r = await fetch('/api/state/channels', { headers: apiHeaders() });
+                if (!r.ok) return;
+                const data = await r.json();
+                const chGrid = document.getElementById('channels-live-grid');
+                const igGrid = document.getElementById('integrations-live-grid');
+                if (chGrid && data.channels) {
+                    chGrid.innerHTML = data.channels.map(_channelCard).join('');
+                }
+                if (igGrid && data.integrations) {
+                    igGrid.innerHTML = data.integrations.map(_integrationCard).join('');
+                }
+            } catch (e) {
+                console.error('fetchChannelsState:', e);
+            }
+        }
+
+        function startChannelsPolling() {
+            if (_channelsTimer) return;
+            fetchChannelsState();
+            _channelsTimer = setInterval(fetchChannelsState, 5000);
+        }
+        function stopChannelsPolling() {
+            if (_channelsTimer) { clearInterval(_channelsTimer); _channelsTimer = null; }
         }
 
         async function fetchTasks() {
@@ -4181,6 +4477,54 @@ C:\Users\Automyx>
             }
         }
 
+        // ===========================================================
+        // 3D WELCOME SCREEN — particles + auto-dismiss
+        // ===========================================================
+        (function initWelcomeScreen() {
+            const screen = document.getElementById('welcome-screen');
+            if (!screen) return;
+
+            // Generate floating particles
+            const particlesBox = document.getElementById('welcome-particles');
+            if (particlesBox) {
+                const colors = ['#00AAFF', '#7BD5FF', '#00E5FF', '#9B6BFF', '#1E5FBE'];
+                for (let i = 0; i < 30; i++) {
+                    const p = document.createElement('div');
+                    p.className = 'welcome-particle';
+                    const size = 2 + Math.random() * 4;
+                    p.style.width  = size + 'px';
+                    p.style.height = size + 'px';
+                    p.style.left    = (Math.random() * 100) + '%';
+                    p.style.top     = (40 + Math.random() * 55) + '%';
+                    p.style.background = colors[Math.floor(Math.random() * colors.length)];
+                    p.style.animationDelay = (Math.random() * 6) + 's';
+                    p.style.animationDuration = (4 + Math.random() * 4) + 's';
+                    particlesBox.appendChild(p);
+                }
+            }
+
+            // Auto-dismiss after 4.5s
+            const AUTO_DISMISS_MS = 4500;
+            const timer = setTimeout(dismissWelcome, AUTO_DISMISS_MS);
+
+            // Click anywhere to dismiss
+            screen.addEventListener('click', function (e) {
+                if (e.target.closest('.welcome-cta')) return; // CTA handles its own
+                dismissWelcome();
+            });
+
+            // Stop timer on manual dismiss
+            window._welcomeTimer = timer;
+        })();
+
+        function dismissWelcome() {
+            const screen = document.getElementById('welcome-screen');
+            if (!screen || screen.classList.contains('dismissed')) return;
+            if (window._welcomeTimer) clearTimeout(window._welcomeTimer);
+            screen.classList.add('dismissed');
+            // Remove from DOM after the transition ends (keep the layer cheap)
+            setTimeout(() => screen.remove(), 900);
+        }
     </script>
 </body>
 </html>
