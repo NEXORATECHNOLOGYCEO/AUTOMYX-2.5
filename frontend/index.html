@@ -2561,8 +2561,8 @@ C:\Users\Automyx>
                 const data = await res.json();
                 catalogCache = data;
                 document.getElementById('cat-stat-skills').innerText = data.total_skills ?? '-';
-                document.getElementById('cat-stat-tools').innerText = data.total_tools ?? '-';
-                document.getElementById('cat-stat-cats').innerText = (data.categories || []).length;
+                document.getElementById('cat-stat-tools').innerText = data.total_tools_in_catalog ?? '-';
+                document.getElementById('cat-stat-cats').innerText = Object.keys(data.categories || {}).length;
                 renderCatalog();
             } catch (e) {
                 document.getElementById('cat-categories').innerHTML = `<p class="text-red-400 text-center py-8">Error cargando catálogo: ${e}</p>`;
@@ -2572,19 +2572,24 @@ C:\Users\Automyx>
         function renderCatalog() {
             if (!catalogCache) return;
             const q = (document.getElementById('catalog-search')?.value || '').toLowerCase();
-            const cats = catalogCache.categories || [];
+            const cats = catalogCache.categories || {};
+            // Convert object-of-arrays to array of {name, skills}
+            const catArray = Object.entries(cats).map(([name, skills]) => ({ name, skills }));
             const filtered = q
-                ? cats.map(c => ({...c, skills: (c.skills || []).filter(s =>
-                    (s.name || '').toLowerCase().includes(q) ||
-                    (s.description || '').toLowerCase().includes(q) ||
-                    (s.tools || []).some(t => t.toLowerCase().includes(q))
-                )})).filter(c => (c.skills || []).length > 0)
-                : cats;
+                ? catArray.map(c => ({
+                    ...c,
+                    skills: (c.skills || []).filter(s =>
+                        (s.name || '').toLowerCase().includes(q) ||
+                        (s.desc || s.description || '').toLowerCase().includes(q) ||
+                        (typeof s.tools === 'string' ? s.tools : (s.tools || []).join(' ')).toLowerCase().includes(q)
+                    )
+                })).filter(c => (c.skills || []).length > 0)
+                : catArray;
             const html = filtered.map(cat => `
                 <details class="bg-panelDark border border-borderDark rounded-xl overflow-hidden" open>
                     <summary class="cursor-pointer p-4 flex items-center justify-between hover:bg-bgDark transition">
                         <div class="flex items-center gap-3">
-                            <span class="text-2xl">${cat.icon || '📦'}</span>
+                            <span class="text-2xl">${cat.icon || cat.skills?.[0]?.icon || '📦'}</span>
                             <div>
                                 <h3 class="font-bold text-white">${cat.name}</h3>
                                 <p class="text-xs text-textMuted">${(cat.skills || []).length} skills</p>
@@ -2596,8 +2601,12 @@ C:\Users\Automyx>
                         ${(cat.skills || []).map(s => `
                             <div class="bg-bgDark border border-borderDark rounded-lg p-3 hover:border-emerald-500 transition">
                                 <h4 class="font-bold text-sm text-emerald-300">${s.name}</h4>
-                                <p class="text-xs text-gray-400 mt-1">${s.description || ''}</p>
-                                ${(s.tools || []).length ? `<p class="text-[0.65rem] text-textMuted mt-2 font-mono">${s.tools.slice(0, 4).join(' · ')}${s.tools.length > 4 ? ' …' : ''}</p>` : ''}
+                                <p class="text-xs text-gray-400 mt-1">${s.desc || s.description || ''}</p>
+                                ${typeof s.tools === 'string' && s.tools
+                                    ? `<p class="text-[0.65rem] text-textMuted mt-2 font-mono">${s.tools}</p>`
+                                    : (s.tools || []).length
+                                        ? `<p class="text-[0.65rem] text-textMuted mt-2 font-mono">${s.tools.slice(0, 4).join(' · ')}${s.tools.length > 4 ? ' …' : ''}</p>`
+                                        : ''}
                             </div>
                         `).join('')}
                     </div>

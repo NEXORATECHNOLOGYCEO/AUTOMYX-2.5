@@ -398,114 +398,185 @@ class VideoTools:
     @staticmethod
     def auto_subtitles(**kwargs) -> str:
         """
-        Genera subtítulos 100% perfectos estilo CapCut usando Whisper con word-timestamps y ASS.
+        Genera subtítulos con Whisper y los QUEMA en el vídeo usando ffmpeg + ASS.
 
-        Acepta aliases comunes que el LLM suele inventar:
-          - subtitle_style (str|dict): si es string 'centered_green', lo parsea a {position, color}
-          - color / font_color: alias para el color del texto
-          - text / text_path: alias para input_path
+        Catálogo de presets (ver core/subtitle_presets.list_presets()):
+          Bold/Energetic:  hype, beast_gold, tiktok_pop, reel_clean, youtube_shorts
+          Minimal/Clean:   minimal, documentary, news_banner, subtitle_bar, clean_white
+          Cinematic:       cinematic, film_noir, netflix, letterbox
+          Neon/Glow:       neon, neon_pink, neon_green, synthwave, retro_arcade
+          Social:          karaoke, capcut_bold, tiktok_classic, meme, explainer
+          Animated:        karaoke_word, fade_in, typewriter
+          Pro:             studio, podcast, sports, vlog, interview
+
+        Acepta aliases: style, template, preset, subtitle_template, subtitle_style
+        (string o dict).
+
+        Acepta overrides por argumento para control total:
+          font_color, outline_color, back_color, font_size, font_family,
+          outline_w (ancho del borde), shadow, bold, italic, alignment (1-9),
+          margin_v (margen vertical en px), position ('top'/'center'/'bottom'),
+          language, uppercase.
+
+        Posición rápida (atajos):
+          'top' / 'arriba' / 'up'             → alignment 8  (top-center)
+          'center' / 'centrado' / 'middle'    → alignment 5  (mid-center)
+          'bottom' / 'abajo' / 'down'         → alignment 2  (bottom-center, default)
+
+        Ejemplo:
+          auto_subtitles(input_path='v.mp4', output_path='out.mp4',
+                         style='hype', font_color='verde', position='center')
         """
         try:
+            from core.subtitle_presets import get_preset, build_ass_style, list_presets, ass_color
+            from core.auto_install import ensure_packages
+
+            # --- 0. Auto-instalar whisper si no está (silencioso) ---
+            try:
+                ensure_packages(["whisper"], verbose=False)
+            except Exception:
+                pass
+
+            # --- 1. Resolver argumentos con aliases ---
             input_path = (kwargs.get('input_path') or kwargs.get('video_path') or kwargs.get('file_path')
                           or kwargs.get('text') or kwargs.get('text_path') or kwargs.get('source')
                           or kwargs.get('input_video') or kwargs.get('input_file'))
             output_path = kwargs.get('output_path') or kwargs.get('out_path') or kwargs.get('output') or kwargs.get('dest')
             language = kwargs.get('language', 'es')
+            whisper_model = kwargs.get('whisper_model') or kwargs.get('model_size') or 'small'
             style = (kwargs.get('style') or kwargs.get('subtitle_style_name') or kwargs.get('template')
-                     or kwargs.get('preset') or kwargs.get('subtitle_template') or 'mrbeast')
+                     or kwargs.get('preset') or kwargs.get('subtitle_template')
+                     or kwargs.get('subtitle_style') or 'hype')
+            # If style is a dict (e.g. subtitle_style={"preset":"hype",...}) handle below
+            if isinstance(style, dict):
+                style = style.get("preset") or style.get("style") or style.get("name") or "hype"
+
             position = (kwargs.get('position') or kwargs.get('subtitle_position') or kwargs.get('text_position')
                         or kwargs.get('pos') or 'center')
+            position = VideoTools._normalize_position(position)
+
             font_color = (kwargs.get('font_color') or kwargs.get('color') or kwargs.get('subtitle_color')
                           or kwargs.get('text_color') or kwargs.get('colour'))
+            if font_color:
+                font_color = VideoTools._normalize_color(font_color)
 
-            # Normalizar position a valores canónicos: 'centrado'/'middle' -> 'center', 'arriba' -> 'top', 'abajo' -> 'bottom'
-            position = VideoTools._normalize_position(position)
-            # Normalizar color a nombres canónicos en español
-            font_color = VideoTools._normalize_color(font_color)
-
-            # Si subtitle_style viene como string (ej 'centered_green'), parsearlo
+            # Parse 'centered_green' style strings
             subtitle_style = kwargs.get('subtitle_style') or kwargs.get('sub_style')
-            if isinstance(subtitle_style, str):
+            if isinstance(subtitle_style, str) and not style or style == 'hype':
                 parsed = VideoTools._parse_subtitle_style_string(subtitle_style)
-                if "style" in parsed and style == 'mrbeast':
-                    style = parsed["style"]
-                if "position" in parsed:
-                    position = parsed["position"]
-                if "color" in parsed and not font_color:
-                    font_color = parsed["color"]
+                if "style" in parsed: style = parsed["style"]
+                if "position" in parsed: position = parsed["position"]
+                if "color" in parsed and not font_color: font_color = parsed["color"]
             elif isinstance(subtitle_style, dict):
-                if 'style' in subtitle_style and style == 'mrbeast':
-                    style = subtitle_style['style']
-                if 'position' in subtitle_style:
-                    position = subtitle_style['position']
+                if 'preset' in subtitle_style or 'style' in subtitle_style:
+                    style = subtitle_style.get('preset') or subtitle_style.get('style')
+                if 'position' in subtitle_style: position = subtitle_style['position']
                 if ('color' in subtitle_style or 'font_color' in subtitle_style) and not font_color:
                     font_color = subtitle_style.get('color') or subtitle_style.get('font_color')
-            
+
             if not input_path or not output_path:
-                return "❌ Error: Faltan argumentos requeridos (input_path y output_path)"
-                
+                available = ", ".join(p["id"] for p in list_presets()[:5]) + ", ..."
+                return (f"❌ Faltan argumentos requeridos (input_path y output_path).\n"
+                        f"Ejemplo: auto_subtitles(input_path='v.mp4', output_path='out.mp4', style='hype')\n"
+                        f"Presets disponibles: {available}")
+
             input_path = PCTools._resolve_path(input_path)
             output_path = VideoTools._prepare_output_path(output_path)
-            import whisper
-            if not os.path.exists(input_path): return f"❌ Error: No se encontró {input_path}"
-            
-            audio_path = "temp_audio.wav"
+            if not os.path.exists(input_path):
+                return f"❌ No se encontró el vídeo: {input_path}"
+            if os.path.getsize(input_path) < 1000:
+                return f"❌ El vídeo es demasiado pequeño ({os.path.getsize(input_path)} bytes). ¿Archivo corrupto?"
+
+            # --- 2. Asegurar ffmpeg ---
+            from shutil import which
+            ffmpeg_bin = which("ffmpeg") or ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+            if not which(ffmpeg_bin):
+                return ("❌ ffmpeg no está instalado.\n"
+                        "Instálalo desde https://ffmpeg.org/download.html o con:\n"
+                        "  - Windows (choco): choco install ffmpeg\n"
+                        "  - macOS:  brew install ffmpeg\n"
+                        "  - Linux:  sudo apt install ffmpeg")
+
+            # --- 3. Extraer audio + normalizar volumen (clave para whisper con audio bajo) ---
+            audio_path = "_automyx_temp_audio.wav"
             try:
-                subprocess.run(["ffmpeg", "-y", "-i", input_path, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", audio_path], check=True, capture_output=True)
-            except subprocess.CalledProcessError as e:
-                return f"❌ Error extrayendo audio del vídeo: {e.stderr.decode('utf-8', errors='ignore')}"
-            
-            model = whisper.load_model("small")
-            result = model.transcribe(audio_path, language=language, word_timestamps=True)
-            
-            ass_path = "temp_subs.ass"
-            
-            def _get_ass_color(color_name, default: str) -> str:
-                colors = {
-                    "rojo": "&H000000FF", "red": "&H000000FF",
-                    "verde": "&H0000FF00", "green": "&H0000FF00",
-                    "azul": "&H00FF0000", "blue": "&H00FF0000",
-                    "amarillo": "&H0000FFFF", "yellow": "&H0000FFFF",
-                    "blanco": "&H00FFFFFF", "white": "&H00FFFFFF",
-                    "negro": "&H00000000", "black": "&H00000000",
-                    "cyan": "&H00FFFF00", "celeste": "&H00FFFF00",
-                    "magenta": "&H00FF00FF", "fucsia": "&H00FF00FF",
-                    "naranja": "&H0000A5FF", "orange": "&H0000A5FF",
-                    "morado": "&H00800080", "purple": "&H00800080"
-                }
-                if not color_name:
-                    return default
-                key = str(color_name).lower().strip()
-                return colors.get(key, default)
-            
-            # Estilos de subtítulos
-            if style == "mrbeast":
-                _default_primary = "&H00FFFFFF"  # blanco
-                style_def = f"Style: Default,Arial Black,28,{_get_ass_color(font_color, _default_primary)},&H0000FFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,10,10,120,1"
-            elif style == "neon":
-                _default_primary = "&H0000FFFF"  # cyan
-                style_def = f"Style: Default,Arial Bold,30,{_get_ass_color(font_color, _default_primary)},&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,2,2,10,10,120,1"
-            elif style == "cinematic":
-                _default_primary = "&H00FFFFFF"  # blanco
-                style_def = f"Style: Default,Georgia,20,{_get_ass_color(font_color, _default_primary)},&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,120,1"
-            else:
-                _default_primary = "&H00FFFFFF"  # blanco
-                style_def = f"Style: Default,Arial,24,{_get_ass_color(font_color, _default_primary)},&H00000000,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,10,10,120,1"
-            
-            # Posición
-            align = 2
-            margin_v = 40
-            if position == "center":
-                align = 5
-                margin_v = 150
-            elif position == "top":
-                align = 8
-                margin_v = 40
-            
+                af = subprocess.run(
+                    [ffmpeg_bin, "-y", "-i", input_path, "-vn",
+                     "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+                     "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", audio_path],
+                    capture_output=True, text=True, timeout=120,
+                )
+                if af.returncode != 0:
+                    err = (af.stderr or "").strip()
+                    tail = "\n".join(err.splitlines()[-8:])
+                    return (f"❌ Error extrayendo audio del vídeo (ffmpeg exit {af.returncode}).\n"
+                            f"{tail}\n"
+                            f"💡 Comprueba que el vídeo no esté corrupto y que ffmpeg soporte el códec.")
+            except subprocess.TimeoutExpired:
+                return "❌ Timeout extrayendo audio (>120s). El vídeo es demasiado largo o el disco está lento."
+            except FileNotFoundError:
+                return f"❌ ffmpeg no se pudo ejecutar (binario: {ffmpeg_bin})"
+
+            # --- 4. Transcribir con Whisper ---
+            try:
+                import whisper
+            except ImportError:
+                return ("❌ Whisper no está instalado. Ejecuta: pip install openai-whisper\n"
+                        "O dile al agente: 'instala whisper' y lo hará automáticamente.")
+            # Whisper model sizes: tiny, base, small, medium, large
+            # Default 'small' es un buen balance velocidad/precisión para CPU.
+            try:
+                model = whisper.load_model(whisper_model)
+                result = model.transcribe(audio_path, language=language, word_timestamps=True)
+            except Exception as e:
+                return f"❌ Error transcribiendo audio con Whisper (modelo={whisper_model}): {e}"
+            finally:
+                if os.path.exists(audio_path):
+                    try: os.remove(audio_path)
+                    except Exception: pass
+
+            if not result.get('segments'):
+                return "⚠️ Whisper no detectó habla en el audio. No hay nada que subtitular."
+
+            # --- 5. Construir el preset + overrides ---
+            preset = get_preset(style)
+            overrides = {
+                "alignment": {"top": 8, "center": 5, "bottom": 2}.get(position, 2),
+                "margin_v":  {"top": 40, "center": 80, "bottom": 60}.get(position, 60),
+            }
+            if font_color:
+                overrides["primary"] = ass_color(font_color)
+            # Explicit overrides
+            for k in ("font_color", "font_family", "font_size",
+                      "outline_color", "outline_w", "shadow",
+                      "bold", "italic", "margin_v", "alignment"):
+                v = kwargs.get(k)
+                if v is not None:
+                    target = {"font_color": "primary", "outline_color": "outline"}.get(k, k)
+                    if target in ("primary", "outline", "back") and isinstance(v, str):
+                        v = ass_color(v)
+                    overrides[target] = v
+
+            style_def = build_ass_style(preset, overrides)
+            margin_v = int(overrides.get("margin_v", 60))
+            uppercase = bool(preset.get("uppercase") or kwargs.get("uppercase"))
+            karaoke_mode = bool(preset.get("karaoke")) and result.get("segments") and any(
+                seg.get("words") for seg in result["segments"]
+            )
+
+            # --- 6. Generar contenido ASS ---
+            ass_path = "_automyx_temp_subs.ass"
+
+            def _fmt(t: float) -> str:
+                h = int(t // 3600); m = int((t % 3600) // 60)
+                s = int(t % 60); cs = int((t % 1) * 100)
+                return f"{h:02}:{m:02}:{s:02}.{cs:02}"
+
             ass_content = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
+ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
@@ -514,35 +585,68 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
-            
-            # Generar subtítulos por segmentos
             for seg in result['segments']:
-                start = f"{int(seg['start'] // 3600):02}:{int((seg['start'] % 3600) // 60):02}:{int(seg['start'] % 60):02}.{int((seg['start'] % 1) * 100):02}"
-                end = f"{int(seg['end'] // 3600):02}:{int((seg['end'] % 3600) // 60):02}:{int(seg['end'] % 60):02}.{int((seg['end'] % 1) * 100):02}"
+                start = _fmt(seg['start'])
+                end = _fmt(seg['end'])
                 text = seg['text'].strip()
+                if uppercase:
+                    text = text.upper()
+                if karaoke_mode and seg.get("words"):
+                    # Word-by-word highlighting using {\k} karaoke tags
+                    parts = []
+                    for w in seg["words"]:
+                        wd = max(int((w["end"] - w["start"]) * 100), 5)
+                        wt = w["word"].strip()
+                        if uppercase: wt = wt.upper()
+                        parts.append("{{\\k%d}}%s" % (wd, wt))
+                    text = "".join(parts)
                 ass_content += f"Dialogue: 0,{start},{end},Default,,0,0,{margin_v},,{text}\n"
-            
+
             with open(ass_path, 'w', encoding='utf-8') as f:
                 f.write(ass_content)
-            
+
+            # --- 7. Quemar subtítulos con ffmpeg ---
+            # Windows: usar subfile protocol con forward slashes + escape
             safe_ass = ass_path.replace('\\', '/').replace(':', '\\:')
             cmd = [
-                "ffmpeg", "-y", "-i", input_path,
+                ffmpeg_bin, "-y", "-i", input_path,
                 "-vf", f"ass={safe_ass}",
-                "-c:a", "copy", output_path
+                "-c:a", "copy",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+                "-movflags", "+faststart",
+                output_path,
             ]
-            sub_res = subprocess.run(cmd, capture_output=True, text=True)
-            
-            if os.path.exists(audio_path): os.remove(audio_path)
-            if os.path.exists(ass_path): os.remove(ass_path)
-            
-            if sub_res.returncode == 0:
-                return f"✅ Subtítulos estilo '{style}' aplicados! Guardado en {output_path}"
+            try:
+                sub_res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            except subprocess.TimeoutExpired:
+                if os.path.exists(ass_path):
+                    try: os.remove(ass_path)
+                    except Exception: pass
+                return "❌ Timeout quemando subtítulos (>600s). El vídeo es demasiado largo."
+            except FileNotFoundError:
+                return f"❌ ffmpeg no se pudo ejecutar (binario: {ffmpeg_bin})"
+
+            if os.path.exists(ass_path):
+                try: os.remove(ass_path)
+                except Exception: pass
+
+            if sub_res.returncode == 0 and os.path.exists(output_path):
+                size_mb = os.path.getsize(output_path) / (1024 * 1024)
+                return (f"✅ Subtítulos aplicados correctamente\n"
+                        f"   Estilo: {preset.get('label', style)} ({style})\n"
+                        f"   Posición: {position}\n"
+                        f"   Color: {font_color or '(default)'}\n"
+                        f"   Salida: {output_path} ({size_mb:.1f} MB)\n"
+                        f"   Segmentos: {len(result['segments'])}")
             else:
-                return f"❌ Error quemando subtítulos: {sub_res.stderr}"
-                
+                err = (sub_res.stderr or sub_res.stdout or "").strip()
+                tail = "\n".join(err.splitlines()[-12:])
+                return (f"❌ ffmpeg falló al quemar subtítulos (exit {sub_res.returncode}).\n"
+                        f"Comando: {' '.join(cmd)}\n"
+                        f"Detalle:\n{tail}")
         except Exception as e:
-            return f"❌ Error en subtítulos: {str(e)}"
+            import traceback
+            return f"❌ Error en subtítulos: {e}\n{traceback.format_exc()[:600]}"
     
     @staticmethod
     def create_tiktok_edit(**kwargs) -> str:
@@ -579,7 +683,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 subs_result = VideoTools.auto_subtitles(
                     input_path=temp_out,
                     output_path=output_path,
-                    style="mrbeast",
+                    style="hype",
                     position="center"
                 )
                 if os.path.exists(temp_out): os.remove(temp_out)
@@ -812,7 +916,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                         "input_path": current,
                         "output_path": current.replace(".mp4", "_withsubs.mp4") if current.endswith(".mp4") else current + "_withsubs.mp4",
                         "language": language,
-                        "style": subtitle_style.get("style", "mrbeast"),
+                        "style": subtitle_style.get("style", "hype"),
                         "position": subtitle_style.get("position", "center"),
                     }
                     # auto_subtitles usa **kwargs, así que le pasamos los relevantes

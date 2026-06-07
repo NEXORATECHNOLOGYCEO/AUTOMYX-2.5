@@ -3,7 +3,10 @@ import sys
 import io
 import base64
 import tempfile
+import time
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from colorama import Fore, Style, init
@@ -29,7 +32,36 @@ if os.path.exists(".env"):
 
 # Configuraciones
 GATEWAY_URL = "http://127.0.0.1:3500/api/gateway/inbound"
+HEALTH_URL = "http://127.0.0.1:3500/api/health"
 USER_MODELS = {} # Memoria temporal del modelo elegido por el usuario
+
+
+# Reusable HTTP session with automatic retry/backoff for transient errors.
+def _build_session() -> requests.Session:
+    sess = requests.Session()
+    retries = Retry(
+        total=3,
+        backoff_factor=0.5,
+        status_forcelist=(502, 503, 504),
+        allowed_methods=frozenset(["GET", "POST"]),
+    )
+    adapter = HTTPAdapter(max_retries=retries, pool_connections=4, pool_maxsize=8)
+    sess.mount("http://", adapter)
+    sess.mount("https://", adapter)
+    sess.headers.update({"Connection": "keep-alive"})
+    return sess
+
+
+SESSION = _build_session()
+
+
+def _gateway_alive(timeout: float = 3.0) -> bool:
+    """Chequeo barato con /api/health (no requiere auth)."""
+    try:
+        r = SESSION.get(HEALTH_URL, timeout=timeout)
+        return r.status_code == 200
+    except Exception:
+        return False
 
 def get_telegram_token():
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -121,14 +153,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        # Probe rápido al gateway para detectar caídas antes de mandar el mensaje largo
+        # Probe rápido al gateway (sin auth) con retry automático
         try:
-            probe = requests.get(
-                "http://127.0.0.1:3500/api/agent/status",
-                headers={"X-Gateway-Token": gw_token},
-                timeout=5,
-            )
-            if probe.status_code not in (200, 404):
+            probe = SESSION.get(HEALTH_URL, timeout=5)
+            if probe.status_code != 200:
                 await update.message.reply_text(
                     f"⚠️ El Gateway responde con HTTP {probe.status_code}.\n"
                     "Puede que esté arrancando o caído. Intenta de nuevo en unos segundos."
@@ -187,12 +215,93 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "message": user_msg,
             "agent_id": "main",
             "model": selected_model,
+            # Modo async para que el gateway responda rápido y no se cierre
+            # la conexión de Telegram si el agente tarda mucho.
+            "async_exec": True,
         }
         if images_payload:
             payload["images"] = images_payload
 
-        # Hacemos la petición al Gateway de Automyx
-        response = requests.post(GATEWAY_URL, json=payload, headers=headers, timeout=180)
+        # POST inicial: si el gateway lo acepta como async, devuelve 202 + task_id
+        try:
+            response = SESSION.post(GATEWAY_URL, json=payload, headers=headers, timeout=10)
+        except requests.exceptions.ConnectionError:
+            await update.message.reply_text(
+                "❌ Se cayó la conexión con el Gateway mientras procesaba tu mensaje. "
+                "Inténtalo de nuevo."
+            )
+            return
+        except requests.exceptions.Timeout:
+            await update.message.reply_text(
+                "⏱️ El Gateway no aceptó la solicitud (timeout 10s). Reintentando…"
+            )
+            try:
+                response = SESSION.post(GATEWAY_URL, json=payload, headers=headers, timeout=20)
+            except Exception:
+                await update.message.reply_text("❌ Gateway no responde, reintenta en unos segundos.")
+                return
+
+        # --- MODO ASYNC: polling del resultado ---
+        if response.status_code == 202 or (response.status_code == 200 and response.json().get("status") == "accepted"):
+            try:
+                data = response.json()
+            except Exception:
+                data = {}
+            task_id = data.get("task_id")
+            if not task_id:
+                # No se pudo obtener task_id → fallback a síncrono
+                pass
+            else:
+                # Poll for up to 50s
+                poll_url = f"http://127.0.0.1:3500/api/gateway/result/{task_id}"
+                deadline = time.time() + 50
+                reply_text = None
+                while time.time() < deadline:
+                    await __import__("asyncio").sleep(1.5)
+                    try:
+                        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
+                    except Exception:
+                        pass
+                    try:
+                        pr = SESSION.get(poll_url, params={"wait": 5}, headers=headers, timeout=10)
+                    except Exception:
+                        continue
+                    if pr.status_code != 200:
+                        continue
+                    try:
+                        pd = pr.json()
+                    except Exception:
+                        continue
+                    st = pd.get("status")
+                    if st == "done":
+                        reply_text = pd.get("reply")
+                        break
+                    if st == "error":
+                        await update.message.reply_text(
+                            f"❌ El Gateway reportó un error:\n\n{str(pd.get('error', ''))[:600]}"
+                        )
+                        return
+                if reply_text is None:
+                    # Timeout pero la tarea sigue corriendo → guardamos task_id
+                    # y avisamos al usuario que seguimos trabajando.
+                    await update.message.reply_text(
+                        f"⏳ Sigo trabajando en tu mensaje… (tarea `{task_id}`). "
+                        "Te aviso en cuanto termine."
+                    )
+                    return
+                # Tenemos respuesta
+                if not reply_text:
+                    await update.message.reply_text("⚠️ El agente devolvió una respuesta vacía.")
+                    return
+                if len(reply_text) > 4000:
+                    for i in range(0, len(reply_text), 4000):
+                        await update.message.reply_text(reply_text[i:i+4000])
+                else:
+                    await update.message.reply_text(reply_text)
+                print(f"{Fore.GREEN}[Telegram] Respondido a {user_name} ({len(reply_text)} chars){Style.RESET_ALL}")
+                return
+
+        # --- MODO SÍNCRONO (fallback) ---
 
         if response.status_code == 200:
             try:

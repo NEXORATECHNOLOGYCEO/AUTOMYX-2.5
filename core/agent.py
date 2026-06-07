@@ -338,6 +338,7 @@ class AutomyxAgent:
             
         self.history = [{"role": "system", "content": self.system_prompt}]
         self.tools: Dict[str, Callable] = {}
+        self._tool_requires: Dict[str, list] = {}
 
     def update_model(self, model_name: str):
         """Actualiza el modelo, proveedor y cliente en caliente."""
@@ -352,8 +353,16 @@ class AutomyxAgent:
         self.history = [{"role": "system", "content": self.system_prompt}]
         return "Memoria borrada."
 
-    def register_tool(self, name: str, func: Callable):
+    def register_tool(self, name: str, func: Callable, requires: Optional[list] = None):
+        """Register a tool. Optionally declare pip deps via `requires=['whisper', 'torch']`.
+
+        When a tool is registered with deps, Automyx checks they're importable
+        (and silently installs missing ones) on first invocation. This avoids
+        the "first run crashes" problem for fresh installs.
+        """
         self.tools[name] = func
+        if requires:
+            self._tool_requires[name] = list(requires)
 
     def _parse_tool_calls(self, response_text: str) -> list:
         """
@@ -439,6 +448,19 @@ class AutomyxAgent:
                 )
         except (TypeError, ValueError):
             pass
+
+        # Pre-flight: ensure pip deps for this tool are installed (silent install).
+        deps = self._tool_requires.get(action)
+        if deps:
+            try:
+                from core.auto_install import ensure_packages
+                if not ensure_packages(deps, verbose=False):
+                    return (
+                        f"No pude instalar dependencias para '{action}': {deps}. "
+                        f"Intenta: pip install {' '.join(deps)}"
+                    )
+            except Exception:
+                pass
         return None
 
     def _guided_setup(self, integration_id: str, understanding: dict = None) -> str:
@@ -956,6 +978,33 @@ class AutomyxAgent:
                     except Exception: pass
                 try:
                     tool_result = self.tools[action](**args)
+                except (ImportError, ModuleNotFoundError) as e:
+                    # Auto-install attempt: detect missing module, pip install, retry once.
+                    import re as _re
+                    m = _re.search(r"no module named ['\"]?([\w\-]+)", str(e))
+                    missing_mod = m.group(1) if m else None
+                    if missing_mod and missing_mod not in {"automyx"}:  # don't install our own packages
+                        try:
+                            from core.auto_install import ensure_packages
+                            _set_phase("installing",
+                                       f"Instalando dependencia faltante: {missing_mod}",
+                                       tool_name=action)
+                            ok = ensure_packages([missing_mod], verbose=False)
+                            if ok:
+                                # Retry the tool once with a fresh import
+                                try:
+                                    tool_result = self.tools[action](**args)
+                                except Exception as e2:
+                                    tool_exc = e2
+                            else:
+                                tool_exc = RuntimeError(
+                                    f"No pude instalar la dependencia '{missing_mod}' automáticamente. "
+                                    f"Ejecuta manualmente: pip install {missing_mod}"
+                                )
+                        except Exception as e3:
+                            tool_exc = e3
+                    else:
+                        tool_exc = e
                 except Exception as e:
                     tool_exc = e
                 duration_ms = int((time.time() - t0) * 1000)

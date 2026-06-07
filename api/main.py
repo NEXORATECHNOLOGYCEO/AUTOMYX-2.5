@@ -119,6 +119,8 @@ class GatewayMessage(BaseModel):
     model: str | None = None
     # Optional multimodal payload — list of {data: base64, mime: image/png}
     images: list[dict] | None = None
+    # Si True, ejecuta el agente en background y responde 202 con task_id
+    async_exec: bool = False
 
 
 class OllamaPullRequest(BaseModel):
@@ -268,7 +270,7 @@ agent.register_tool("add_intro_outro", VideoTools.add_intro_outro)
 agent.register_tool("composite_movie_sequence", VideoTools.composite_movie_sequence)
 agent.register_tool("add_music_to_video", VideoTools.add_music_to_video)
 agent.register_tool("apply_visual_effect", VideoTools.apply_visual_effect)
-agent.register_tool("auto_subtitles", VideoTools.auto_subtitles)
+agent.register_tool("auto_subtitles", VideoTools.auto_subtitles, requires=["whisper"])
 agent.register_tool("create_tiktok_edit", VideoTools.create_tiktok_edit)
 agent.register_tool("add_dynamic_zoom", VideoTools.add_dynamic_zoom)
 agent.register_tool("advanced_video_editor", VideoTools.advanced_video_editor)
@@ -280,9 +282,9 @@ agent.register_tool("osint_search", CyberTools.osint_search)
 agent.register_tool("apply_autotune", AudioTools.apply_autotune)
 agent.register_tool("mix_music", AudioTools.mix_music)
 agent.register_tool("master_audio", AudioTools.master_audio)
-agent.register_tool("extract_text_from_image", ExtraTools.extract_text_from_image)
-agent.register_tool("text_to_speech", ExtraTools.text_to_speech)
-agent.register_tool("download_video", ExtraTools.download_video)
+agent.register_tool("extract_text_from_image", ExtraTools.extract_text_from_image, requires=["pytesseract", "PIL"])
+agent.register_tool("text_to_speech", ExtraTools.text_to_speech, requires=["edge_tts"])
+agent.register_tool("download_video", ExtraTools.download_video, requires=["yt_dlp"])
 agent.register_tool("generate_3d_model", ThreeDTools.generate_3d_model)
 agent.register_tool("run_blender_script", ThreeDTools.run_blender_script)
 agent.register_tool("execute_blender_python_code", ThreeDTools.execute_blender_python_code)
@@ -868,9 +870,49 @@ async def clear_lessons_endpoint(_: bool = Depends(verify_gateway_token)):
 
 
 # --- ENDPOINTS EXISTENTES (COMPATIBILIDAD HACIA ATRÁS) ---
+import time as _time
+_STARTUP_TS = _time.time()
+
+
 @app.get("/api/agent/status")
 async def get_agent_status_endpoint(_: bool = Depends(verify_gateway_token)):
     return agent_status
+
+
+@app.get("/api/health")
+async def health_endpoint():
+    """Health check para bots y orquestadores. NO requiere auth.
+
+    Devuelve estado del agente, GPU, memoria, uptime.
+    Útil para que los bots (Telegram/Discord/Instagram) sepan si deben
+    reintentar, esperar, o reportar al usuario.
+    """
+    import time as _t
+    try:
+        import psutil
+        cpu = psutil.cpu_percent(interval=0)
+        mem = psutil.virtual_memory()
+    except Exception:
+        cpu, mem = None, None
+    try:
+        import torch
+        gpu_available = torch.cuda.is_available()
+        gpu_name = torch.cuda.get_device_name(0) if gpu_available else None
+    except Exception:
+        gpu_available, gpu_name = False, None
+    return {
+        "status": "ok",
+        "agent_running": agent_status.get("running", True) if isinstance(agent_status, dict) else True,
+        "model": getattr(agent, "model_name", "?"),
+        "provider": getattr(agent, "provider", "?"),
+        "phase": agent_status.get("phase", "idle") if isinstance(agent_status, dict) else "idle",
+        "uptime_s": _t.time() - _STARTUP_TS,
+        "cpu_percent": cpu,
+        "memory_percent": mem.percent if mem else None,
+        "gpu_available": gpu_available,
+        "gpu_name": gpu_name,
+        "version": "2.5.0",
+    }
 
 
 @app.get("/api/tasks")
@@ -916,14 +958,22 @@ async def delete_task_endpoint(task_id: str, _: bool = Depends(verify_gateway_to
 
 @app.post("/api/gateway/inbound")
 async def universal_gateway_inbound(data: GatewayMessage, _: bool = Depends(verify_gateway_token)):
-    """Endpoint universal para todos los canales"""
+    """Endpoint universal para todos los canales.
+
+    Modos:
+      - `async_exec=true` → ejecuta el agente en background y responde 202 con
+        un `task_id`. El bot debe hacer polling a `/api/gateway/result/{task_id}`
+        o conectarse al WebSocket para recibir el resultado. Esto evita que
+        Telegram cierre la conexión por timeout.
+      - `async_exec=false` (default) → ejecuta síncrono y devuelve la respuesta.
+    """
+    async_exec = bool(getattr(data, "async_exec", False))
     try:
-        # Actualizar el modelo dinámicamente si el canal lo solicita
         if data.model and data.model != agent.model_name:
             agent.update_model(data.model)
-
+        if async_exec:
+            return await _async_inbound(data)
         result = agent.run(data.message, images=data.images)
-        # Detect intent (for bots that want to react differently)
         try:
             from core.intent_engine import understand
             u = understand(data.message)
@@ -943,10 +993,79 @@ async def universal_gateway_inbound(data: GatewayMessage, _: bool = Depends(veri
         return {"error": str(e)}
 
 
+# Task store for async mode
+_ASYNC_TASKS: dict = {}
+
+
+async def _async_inbound(data: "GatewayMessage"):
+    """Ejecuta el agente en background y devuelve 202 con task_id."""
+    import uuid
+    task_id = uuid.uuid4().hex[:12]
+    _ASYNC_TASKS[task_id] = {
+        "status": "running",
+        "started_at": __import__("time").time(),
+        "channel": data.channel,
+        "sender_id": data.sender_id,
+        "message": data.message,
+    }
+
+    async def _run():
+        try:
+            from core.intent_engine import understand
+            u = understand(data.message)
+            _ASYNC_TASKS[task_id]["intent"] = u.get("intent", "unknown")
+            _ASYNC_TASKS[task_id]["intent_confidence"] = u.get("intent_confidence", 0.0)
+        except Exception:
+            _ASYNC_TASKS[task_id]["intent"] = "unknown"
+            _ASYNC_TASKS[task_id]["intent_confidence"] = 0.0
+        try:
+            loop = asyncio.get_event_loop()
+            # Run blocking agent.run() in a thread so the event loop stays free
+            result = await loop.run_in_executor(
+                None, lambda: agent.run(data.message, images=data.images)
+            )
+            _ASYNC_TASKS[task_id].update({
+                "status": "done",
+                "reply": result,
+                "finished_at": __import__("time").time(),
+            })
+        except Exception as e:
+            _ASYNC_TASKS[task_id].update({
+                "status": "error",
+                "error": str(e),
+                "finished_at": __import__("time").time(),
+            })
+
+    asyncio.ensure_future(_run())
+    return {
+        "status": "accepted",
+        "task_id": task_id,
+        "channel": data.channel,
+        "poll_url": f"/api/gateway/result/{task_id}",
+    }
+
+
+@app.get("/api/gateway/result/{task_id}")
+async def get_async_result(task_id: str, wait: int = 0, _: bool = Depends(verify_gateway_token)):
+    """Recupera el resultado de una tarea async.
+
+    `wait` = segundos máximos a esperar por la respuesta (max 50s).
+    """
+    import asyncio as _aio
+    deadline = _aio.get_event_loop().time() + min(max(wait, 0), 50)
+    while _aio.get_event_loop().time() < deadline:
+        task = _ASYNC_TASKS.get(task_id)
+        if task and task["status"] in ("done", "error"):
+            return task
+        await _aio.sleep(0.5)
+    task = _ASYNC_TASKS.get(task_id)
+    if task is None:
+        return {"error": "task_not_found", "task_id": task_id}
+    return {"status": task["status"], "task_id": task_id}
+
+
 # NOTA: El endpoint WebSocket /ws ya está registrado por core/gateway.py
 # dentro de create_gateway_app(agent). No duplicar aquí para evitar shadowing.
-    except Exception as e:
-        return {"error": str(e)}
 
 
 # =============================================================================
@@ -1313,6 +1432,18 @@ async def tools_catalog_endpoint(category: Optional[str] = None, _: bool = Depen
             "categories": list(TOOL_SEEDS.keys())[:50],
             "tools": canonical_tools,
         }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/subtitles/presets")
+async def subtitle_presets_endpoint(_: bool = Depends(verify_gateway_token)):
+    """Lista los presets de subtítulos disponibles para la UI."""
+    try:
+        from core.subtitle_presets import list_presets, categories
+        return {"presets": list_presets(), "categories": categories()}
+    except Exception as e:
+        return {"error": str(e)}
     except Exception as e:
         return {"error": str(e)}
 
