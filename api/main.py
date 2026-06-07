@@ -6,9 +6,10 @@ Inspirado en OpenClaw
 - Health checks
 - Sistema de configuración profesional
 """
-from fastapi import FastAPI, Request, WebSocket, Depends, HTTPException, Header
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, HTTPException, Header
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+import asyncio
 from pydantic import BaseModel
 import sys
 import os
@@ -922,12 +923,28 @@ async def universal_gateway_inbound(data: GatewayMessage, _: bool = Depends(veri
             agent.update_model(data.model)
 
         result = agent.run(data.message, images=data.images)
+        # Detect intent (for bots that want to react differently)
+        try:
+            from core.intent_engine import understand
+            u = understand(data.message)
+            intent_name = u.get("intent", "unknown")
+            intent_confidence = u.get("intent_confidence", 0.0)
+        except Exception:
+            intent_name, intent_confidence = "unknown", 0.0
         return {
             "reply": result,
             "channel": data.channel,
             "agent_used": data.agent_id,
             "has_images": bool(data.images),
+            "intent": intent_name,
+            "intent_confidence": intent_confidence,
         }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# NOTA: El endpoint WebSocket /ws ya está registrado por core/gateway.py
+# dentro de create_gateway_app(agent). No duplicar aquí para evitar shadowing.
     except Exception as e:
         return {"error": str(e)}
 

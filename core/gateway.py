@@ -233,6 +233,26 @@ class AutomyxGateway:
                 message = params.get("message", "")
                 response["ok"] = True
                 response["payload"] = {"status": "sent", "channel": channel}
+
+            elif method == "intent":
+                # Detectar intent sin ejecutar el agente
+                text = params.get("text", "")
+                try:
+                    from core.intent_engine import understand
+                    u = understand(text)
+                    response["ok"] = True
+                    response["payload"] = {
+                        "intent": u.get("intent"),
+                        "confidence": u.get("intent_confidence", 0.0),
+                        "matched_keyword": u.get("matched_keyword"),
+                    }
+                except Exception as e:
+                    response["ok"] = False
+                    response["error"] = str(e)
+
+            elif method == "ping":
+                response["ok"] = True
+                response["payload"] = {"pong": True, "ts": time.time()}
             
             else:
                 response["ok"] = False
