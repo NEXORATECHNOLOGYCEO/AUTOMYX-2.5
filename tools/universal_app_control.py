@@ -247,9 +247,23 @@ class UniversalAppControl:
         return "Captura de región tomada"
 
     @staticmethod
-    def find_image_on_screen(image_path: str, confidence: float = 0.9) -> Optional[Dict[str, int]]:
-        """Busca una imagen en la pantalla y devuelve sus coordenadas"""
+    def find_image_on_screen(*args, confidence: float = 0.9, **kwargs) -> Optional[Dict[str, int]]:
+        """Busca una imagen en la pantalla y devuelve sus coordenadas.
+        Acepta alias comunes para el parámetro de ruta: image_path, image_name, image, path, file, template."""
         if not PYAUTOGUI_AVAILABLE:
+            return None
+
+        image_path = (
+            kwargs.pop("image_path", None)
+            or kwargs.pop("image_name", None)
+            or kwargs.pop("image", None)
+            or kwargs.pop("path", None)
+            or kwargs.pop("file", None)
+            or kwargs.pop("template", None)
+        )
+        if not image_path and args:
+            image_path = args[0]
+        if not image_path:
             return None
 
         try:
@@ -268,13 +282,33 @@ class UniversalAppControl:
             return None
 
     @staticmethod
-    def click_image(image_path: str, confidence: float = 0.9) -> str:
-        """Busca una imagen en la pantalla y hace clic en ella"""
-        location = UniversalAppControl.find_image_on_screen(image_path, confidence)
+    def click_image(*args, confidence: float = 0.9, **kwargs) -> str:
+        """Busca una imagen en la pantalla y hace clic en ella.
+        Acepta alias comunes para el parámetro de ruta: image_path, image_name, image, path, file, template."""
+        image_path = (
+            kwargs.pop("image_path", None)
+            or kwargs.pop("image_name", None)
+            or kwargs.pop("image", None)
+            or kwargs.pop("path", None)
+            or kwargs.pop("file", None)
+            or kwargs.pop("template", None)
+        )
+        if not image_path and args:
+            image_path = args[0]
+        if not image_path:
+            return ("❌ Error: falta el argumento de la imagen a buscar. "
+                    "Usa 'image_path' con la ruta absoluta o nombre del archivo de imagen "
+                    "(PNG/JPG existente en disco).")
+
+        location = UniversalAppControl.find_image_on_screen(image_path, confidence=confidence)
         if location:
             pyautogui.click(location["x"], location["y"])
             return f"Imagen encontrada y clic en ({location['x']}, {location['y']})"
-        return f"Imagen {image_path} no encontrada en la pantalla"
+        return (f"❌ Imagen '{image_path}' NO encontrada en la pantalla. "
+                "Causas probables: (1) la ruta/archivo no existe, (2) la app objetivo no está al frente, "
+                "(3) el template es de baja resolución o cambió la UI. "
+                "Alternativas: usa 'screenshot' + 'analyze_browser_screen' para inspección visual, "
+                "'ui_click' con coordenadas x/y, o 'press_key'/'type_text' para interacción por teclado.")
 
     @staticmethod
     def scroll(amount: int, direction: str = "down") -> str:

@@ -22,7 +22,7 @@ sdist/
 var/
 wheels/
 *.egg-info/
-.installed.cfg
+.installed.cfg/
 *.egg
 
 # Archivos generados
@@ -57,3 +57,18 @@ yarn-error.log*
 *.key
 *.cert
 *.crt
+
+# Runtime / state (generated, large, never commit)
+state/
+*.sqlite
+*.sqlite-journal
+*.db
+nexus_data/*.json
+nexus_data/*.db
+aumformbring_data/*.json
+auto_improvements.json
+temp_audio.wav
+state/opencode_sessions/
+state/.automix/
+skills_cache/
+

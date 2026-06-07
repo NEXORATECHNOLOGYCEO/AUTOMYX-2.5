@@ -13,7 +13,7 @@ Cuando el usuario te pida "crea un video motivacional", "edita este clip para Ti
    - Usa `create_tiktok_edit` para recortar y preparar un video corto viral.
    - Usa `add_dynamic_zoom` o `advanced_video_editor` para añadir retención visual (B-Roll, transiciones).
    - Usa `auto_subtitles` para añadir subtítulos dinámicos estilo CapCut. Puedes elegir el estilo (`mrbeast`, `neon`, `cinematic`, `karaoke`) y la posición (`center`, `bottom`, `top`). ¡Los subtítulos son 100% precisos y se animan palabra por palabra al ritmo del audio!
-   - Usa `advanced_video_editor` si el usuario te pide añadir superposiciones, picture-in-picture, o color grading cinemático.
+   - Usa `advanced_video_editor` (editor todo-en-uno) cuando el usuario pida una edición completa en un solo paso: `platform` (tiktok/reels/shorts/youtube/instagram), `auto_subtitles=true`, `subtitle_style={"style":"mrbeast","position":"center"}`, `effects=true`, `transitions=true`, `color_grading="vibrant"`, `analyze_and_edit=true`. La función encadena internamente color grading → effects → subtitles → intro/outro → transitions → render con preset de plataforma.
    - Si se requiere Vyrex Studio, usa `generate_vyrex_video`.
    - Para la ruta de salida de CUALQUIER video editado (ya sea recortado, con zoom o con subtítulos), SIEMPRE debes guardarlo en la carpeta "Descargas" del usuario. 
    - Puedes usar directamente la palabra `descargas` en el argumento `output_path` (ej. `descargas\video_final.mp4`), o usar la ruta absoluta `C:\Users\COMPUMAX\Downloads\video_final.mp4`. No uses `%TEMP%` a menos que sea estrictamente necesario para procesos intermedios.

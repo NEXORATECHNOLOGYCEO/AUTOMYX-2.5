@@ -20,6 +20,9 @@ if sys.stdout.encoding.lower() != 'utf-8':
     except Exception:
         pass
 
+import logging
+logger = logging.getLogger("automyx.api")
+
 import json
 import sqlite3
 import requests
@@ -58,6 +61,34 @@ from tools.nexus_core import nexus_core
 from tools.automation_pro import WorkflowManager, ScriptEditorPro, AdvancedMemory, APIIntegrationPro, ChainOfThought
 from tools.elite_skills import GitHubTools, CloudDevOpsTools, DataScienceTools, SmartHomeTools, CreativeTools, UniqueAutomyxTools
 
+# === NUEVAS SKILLS Ã‰LITE 2026 ===
+from tools.academic_tools import AcademicTools
+from tools.accountant_tools import AccountantTools
+from tools.livestream_tools import LivestreamTools
+from tools.swarm_tools import SwarmOrchestrator
+from tools.skill_forger import SkillForger
+from tools.stealth_browser_tools import StealthBrowserTools
+from tools.rag_memory_tools import RAGMemoryTools
+from tools.task_coordinator import TaskCoordinator
+from tools.error_learning import ErrorLearningSystem
+
+# === SKILLS NUEVAS 2026 - BESTIA PROFESIONAL ===
+import tools.json_tools as json_tools
+from tools.document_intelligence import DocumentIntelligenceTools
+from tools.opencode_tools import OpenCodeTools
+from tools.notion_tools import NotionTools
+from tools.obsidian_tools import ObsidianTools
+from tools.github_pro_tools import GitHubProTools
+from tools.calendar_tools import CalendarTools
+from tools.crypto_tools import CryptoTools
+from tools.database_tools import DatabaseTools
+from tools.translation_tools import TranslationTools
+from tools.code_review_tools import CodeReviewTools
+from tools.test_runner_tools import TestRunnerTools
+from tools.deployment_tools import DeploymentTools
+from tools.pdf_pro_tools import PDFProTools
+from tools.video_pro_tools import VideoProTools
+
 
 async def verify_gateway_token(x_gateway_token: Optional[str] = Header(None)):
     """Verifica el token de gateway en las solicitudes"""
@@ -84,6 +115,7 @@ class GatewayMessage(BaseModel):
     sender_id: str
     message: str
     agent_id: str = "main"
+    model: str | None = None
 
 
 class OllamaPullRequest(BaseModel):
@@ -181,6 +213,15 @@ def sync_agents_to_md():
 # Leer modelo desde variable de entorno o usar el predeterminado
 DEFAULT_MODEL = os.environ.get("AUTOMYX_MODEL", "nvidia/gpt-oss-120b")
 agent = AutomyxAgent(model_name=DEFAULT_MODEL)
+
+# --- EXPANSIÓN DE ALIASES (2500+ tools) ---
+# Aplicar mega_tools para generar aliases coloquiales
+try:
+    from tools.mega_tools import expand_registry_aliases, count_aliases
+    # Las tools se registran DESPUÉS, pero podemos contar los planeados
+    logger.info(f"[mega_tools] {count_aliases(max_per_seed=2)} aliases listos para expandir")
+except Exception as e:
+    logger.debug(f"mega_tools no disponible: {e}")
 
 # Registrar herramientas
 agent.register_tool("execute_cmd", PCTools.execute_cmd)
@@ -379,6 +420,324 @@ agent.register_tool("autonomous_codebase_healing", UniqueAutomyxTools.autonomous
 agent.register_tool("predictive_market_analysis", UniqueAutomyxTools.predictive_market_analysis)
 
 
+# ============================================================
+# NUEVAS SKILLS Ã‰LITE 2026
+# ============================================================
+
+# Academic Researcher
+agent.register_tool("academic_search_arxiv", AcademicTools.search_arxiv)
+agent.register_tool("academic_search_pubmed", AcademicTools.search_pubmed)
+agent.register_tool("academic_search_crossref", AcademicTools.search_crossref)
+agent.register_tool("academic_search_semantic_scholar", AcademicTools.search_semantic_scholar)
+agent.register_tool("academic_fetch_abstract", AcademicTools.fetch_abstract)
+agent.register_tool("academic_generate_citation", AcademicTools.generate_citation)
+agent.register_tool("academic_generate_literature_review", AcademicTools.generate_literature_review)
+
+# Accountant & Tax
+agent.register_tool("accountant_parse_invoice_pdf", AccountantTools.parse_invoice_pdf)
+agent.register_tool("accountant_parse_invoice_xml", AccountantTools.parse_invoice_xml)
+agent.register_tool("accountant_bulk_import_folder", AccountantTools.bulk_import_folder)
+agent.register_tool("accountant_reconcile_bank_statement", AccountantTools.reconcile_bank_statement)
+agent.register_tool("accountant_calculate_tax", AccountantTools.calculate_tax)
+agent.register_tool("accountant_validate_tax_id", AccountantTools.validate_tax_id)
+agent.register_tool("accountant_generate_afip_report", AccountantTools.generate_afip_report)
+agent.register_tool("accountant_generate_sat_report", AccountantTools.generate_sat_report)
+agent.register_tool("accountant_generate_sunat_report", AccountantTools.generate_sunat_report)
+agent.register_tool("accountant_generate_aeat_report", AccountantTools.generate_aeat_report)
+agent.register_tool("accountant_generate_financial_report", AccountantTools.generate_financial_report)
+
+# Livestream Director (OBS WebSocket v5)
+agent.register_tool("livestream_obs_connect", LivestreamTools.obs_connect)
+agent.register_tool("livestream_obs_start_stream", LivestreamTools.obs_start_stream)
+agent.register_tool("livestream_obs_stop_stream", LivestreamTools.obs_stop_stream)
+agent.register_tool("livestream_obs_start_recording", LivestreamTools.obs_start_recording)
+agent.register_tool("livestream_obs_stop_recording", LivestreamTools.obs_stop_recording)
+agent.register_tool("livestream_obs_switch_scene", LivestreamTools.obs_switch_scene)
+agent.register_tool("livestream_obs_get_scenes", LivestreamTools.obs_get_scenes)
+agent.register_tool("livestream_obs_toggle_source", LivestreamTools.obs_toggle_source)
+agent.register_tool("livestream_obs_set_source_text", LivestreamTools.obs_set_source_text)
+agent.register_tool("livestream_obs_set_bitrate", LivestreamTools.obs_set_bitrate)
+agent.register_tool("livestream_obs_get_status", LivestreamTools.obs_get_status)
+agent.register_tool("livestream_setup_multistream", LivestreamTools.setup_multistream)
+agent.register_tool("livestream_get_stream_health", LivestreamTools.get_stream_health)
+agent.register_tool("livestream_create_alert_overlay", LivestreamTools.create_alert_overlay)
+agent.register_tool("livestream_update_ticker", LivestreamTools.update_ticker)
+agent.register_tool("livestream_set_moderation_rules", LivestreamTools.set_moderation_rules)
+agent.register_tool("livestream_moderate_chat", LivestreamTools.moderate_chat)
+agent.register_tool("livestream_save_preset", LivestreamTools.save_preset)
+agent.register_tool("livestream_load_preset", LivestreamTools.load_preset)
+agent.register_tool("livestream_schedule_scene", LivestreamTools.schedule_scene)
+
+# Swarm Orchestrator
+agent.register_tool("swarm_register_node", SwarmOrchestrator.register_node)
+agent.register_tool("swarm_list_nodes", SwarmOrchestrator.list_nodes)
+agent.register_tool("swarm_remove_node", SwarmOrchestrator.remove_node)
+agent.register_tool("swarm_health_check", SwarmOrchestrator.health_check)
+agent.register_tool("swarm_dispatch_task", SwarmOrchestrator.dispatch_task)
+agent.register_tool("swarm_dispatch_parallel", SwarmOrchestrator.dispatch_parallel)
+agent.register_tool("swarm_dispatch_map_reduce", SwarmOrchestrator.dispatch_map_reduce)
+agent.register_tool("swarm_pipeline", SwarmOrchestrator.pipeline)
+agent.register_tool("swarm_consensus", SwarmOrchestrator.consensus)
+agent.register_tool("swarm_get_task_status", SwarmOrchestrator.get_task_status)
+
+# Skill Forger (auto-evoluciÃ³n)
+agent.register_tool("forger_analyze_patterns", SkillForger.analyze_patterns)
+agent.register_tool("forger_cluster_similar_requests", SkillForger.cluster_similar_requests)
+agent.register_tool("forger_forge_skill", SkillForger.forge_skill)
+agent.register_tool("forger_validate_skill", SkillForger.validate_skill)
+agent.register_tool("forger_track_skill_usage", SkillForger.track_skill_usage)
+agent.register_tool("forger_promote_skill", SkillForger.promote_skill)
+agent.register_tool("forger_demote_skill", SkillForger.demote_skill)
+agent.register_tool("forger_archive_skill", SkillForger.archive_skill)
+agent.register_tool("forger_list_forged_skills", SkillForger.list_forged_skills)
+agent.register_tool("forger_run_cycle", SkillForger.run_cycle)
+agent.register_tool("forger_check_duplicates", SkillForger.check_duplicates)
+
+# Browser Stealth RPA
+agent.register_tool("stealth_launch_browser", StealthBrowserTools.launch_browser)
+agent.register_tool("stealth_goto", StealthBrowserTools.goto)
+agent.register_tool("stealth_human_click", StealthBrowserTools.human_click)
+agent.register_tool("stealth_human_type", StealthBrowserTools.human_type)
+agent.register_tool("stealth_human_scroll", StealthBrowserTools.human_scroll)
+agent.register_tool("stealth_solve_recaptcha_v2", StealthBrowserTools.solve_recaptcha_v2)
+agent.register_tool("stealth_solve_cloudflare", StealthBrowserTools.solve_cloudflare)
+agent.register_tool("stealth_save_session", StealthBrowserTools.save_session)
+agent.register_tool("stealth_load_session", StealthBrowserTools.load_session)
+agent.register_tool("stealth_scrape_selector", StealthBrowserTools.scrape_selector)
+agent.register_tool("stealth_screenshot_full_page", StealthBrowserTools.screenshot_full_page)
+agent.register_tool("stealth_set_proxy_pool", StealthBrowserTools.set_proxy_pool)
+agent.register_tool("stealth_test_proxy", StealthBrowserTools.test_proxy)
+agent.register_tool("stealth_rotate_fingerprint", StealthBrowserTools.rotate_fingerprint)
+agent.register_tool("stealth_close_browser", StealthBrowserTools.close_browser)
+
+# RAG Memory Vector
+agent.register_tool("rag_init_collection", RAGMemoryTools.init_collection)
+agent.register_tool("rag_list_collections", RAGMemoryTools.list_collections)
+agent.register_tool("rag_collection_stats", RAGMemoryTools.collection_stats)
+agent.register_tool("rag_delete_collection", RAGMemoryTools.delete_collection)
+agent.register_tool("rag_index_file", RAGMemoryTools.index_file)
+agent.register_tool("rag_index_folder", RAGMemoryTools.index_folder)
+agent.register_tool("rag_index_url", RAGMemoryTools.index_url)
+agent.register_tool("rag_index_conversation", RAGMemoryTools.index_conversation)
+agent.register_tool("rag_query", RAGMemoryTools.query)
+agent.register_tool("rag_answer", RAGMemoryTools.answer)
+agent.register_tool("rag_delete_document", RAGMemoryTools.delete_document)
+agent.register_tool("rag_sync_aumformbring", RAGMemoryTools.sync_aumformbring)
+
+# Task Coordinator (precisiÃ³n)
+agent.register_tool("task_coord_resolve_path", TaskCoordinator.resolve_path)
+agent.register_tool("task_coord_find_files", TaskCoordinator.find_files)
+agent.register_tool("task_coord_parse_intent", TaskCoordinator.parse_intent)
+agent.register_tool("task_coord_build_plan", TaskCoordinator.build_plan)
+agent.register_tool("task_coord_verify_preconditions", TaskCoordinator.verify_preconditions)
+agent.register_tool("task_coord_verify_outputs", TaskCoordinator.verify_outputs)
+
+# Error Learning System (auto-aprendizaje de errores)
+agent.register_tool("error_learn_log", ErrorLearningSystem.log_error)
+agent.register_tool("error_learn_get_lessons", ErrorLearningSystem.get_all_lessons)
+agent.register_tool("error_learn_get_for_tool", ErrorLearningSystem.get_lessons_for_tool)
+agent.register_tool("error_learn_stats", ErrorLearningSystem.stats)
+agent.register_tool("error_learn_add_manual", ErrorLearningSystem.add_manual_lesson)
+agent.register_tool("error_learn_clear", ErrorLearningSystem.clear_lessons)
+
+
+# ============================================================
+# SKILLS NUEVAS 2026 - BESTIA PROFESIONAL
+# ============================================================
+
+# JSON Tools (validador, reparador, transformer)
+agent.register_tool("json_validate", json_tools.json_validate)
+agent.register_tool("json_repair", json_tools.json_repair)
+agent.register_tool("json_pretty", json_tools.json_pretty)
+agent.register_tool("json_minify", json_tools.json_minify)
+agent.register_tool("json_sort_keys", json_tools.json_sort_keys)
+agent.register_tool("json_diff", json_tools.json_diff)
+agent.register_tool("json_query", json_tools.json_query)
+agent.register_tool("json_to_format", json_tools.json_to_format)
+agent.register_tool("format_to_json", json_tools.format_to_json)
+agent.register_tool("json_stats", json_tools.json_stats)
+agent.register_tool("json_merge", json_tools.json_merge)
+agent.register_tool("json_fingerprint", json_tools.json_fingerprint)
+agent.register_tool("json_read_file", json_tools.json_read_file)
+agent.register_tool("json_write_file", json_tools.json_write_file)
+agent.register_tool("jsonl_parse", json_tools.jsonl_parse)
+agent.register_tool("jsonl_format", json_tools.jsonl_format)
+
+# Document Intelligence (OCR + NER + classify + summarize)
+agent.register_tool("doc_ocr", DocumentIntelligenceTools.ocr)
+agent.register_tool("doc_ocr_pdf", DocumentIntelligenceTools.ocr_pdf)
+agent.register_tool("doc_entities", DocumentIntelligenceTools.entities)
+agent.register_tool("doc_classify", DocumentIntelligenceTools.classify)
+agent.register_tool("doc_summarize", DocumentIntelligenceTools.summarize)
+agent.register_tool("doc_outline", DocumentIntelligenceTools.outline)
+agent.register_tool("doc_compare", DocumentIntelligenceTools.compare)
+
+# OpenCode CLI Bridge
+agent.register_tool("opencode_available", OpenCodeTools.is_available)
+agent.register_tool("opencode_run", OpenCodeTools.run)
+agent.register_tool("opencode_code_review", OpenCodeTools.code_review)
+agent.register_tool("opencode_generate_tests", OpenCodeTools.generate_tests)
+agent.register_tool("opencode_refactor", OpenCodeTools.refactor)
+agent.register_tool("opencode_explain", OpenCodeTools.explain)
+agent.register_tool("opencode_generate_from_spec", OpenCodeTools.generate_from_spec)
+agent.register_tool("opencode_sessions_list", OpenCodeTools.sessions_list)
+agent.register_tool("opencode_session_get", OpenCodeTools.session_get)
+agent.register_tool("opencode_session_resume", OpenCodeTools.session_resume)
+
+# Notion (API REST)
+agent.register_tool("notion_search", NotionTools.search)
+agent.register_tool("notion_get_page", NotionTools.get_page)
+agent.register_tool("notion_get_page_content", NotionTools.get_page_content)
+agent.register_tool("notion_get_database", NotionTools.get_database)
+agent.register_tool("notion_create_page", NotionTools.create_page)
+agent.register_tool("notion_update_page", NotionTools.update_page)
+agent.register_tool("notion_append_blocks", NotionTools.append_blocks)
+agent.register_tool("notion_delete_page", NotionTools.delete_page)
+
+# Obsidian (vaults locales)
+agent.register_tool("obsidian_list_vaults", ObsidianTools.list_vaults)
+agent.register_tool("obsidian_search", ObsidianTools.search)
+agent.register_tool("obsidian_create_note", ObsidianTools.create_note)
+agent.register_tool("obsidian_read_note", ObsidianTools.read_note)
+agent.register_tool("obsidian_append", ObsidianTools.append)
+agent.register_tool("obsidian_graph", ObsidianTools.graph)
+agent.register_tool("obsidian_daily", ObsidianTools.daily)
+agent.register_tool("obsidian_tags", ObsidianTools.tags)
+
+# GitHub Pro (gh CLI)
+agent.register_tool("gh_status", GitHubProTools.status)
+agent.register_tool("gh_list_repos", GitHubProTools.list_repos)
+agent.register_tool("gh_clone", GitHubProTools.clone)
+agent.register_tool("gh_create_repo", GitHubProTools.create_repo)
+agent.register_tool("gh_list_issues", GitHubProTools.list_issues)
+agent.register_tool("gh_create_issue", GitHubProTools.create_issue)
+agent.register_tool("gh_close_issue", GitHubProTools.close_issue)
+agent.register_tool("gh_list_prs", GitHubProTools.list_prs)
+agent.register_tool("gh_create_pr", GitHubProTools.create_pr)
+agent.register_tool("gh_merge_pr", GitHubProTools.merge_pr)
+agent.register_tool("gh_list_releases", GitHubProTools.list_releases)
+agent.register_tool("gh_create_release", GitHubProTools.create_release)
+agent.register_tool("gh_list_workflows", GitHubProTools.list_workflows)
+agent.register_tool("gh_run_workflow", GitHubProTools.run_workflow)
+
+# Calendar (iCal local + Google stub)
+agent.register_tool("cal_add", CalendarTools.add)
+agent.register_tool("cal_list", CalendarTools.list)
+agent.register_tool("cal_delete", CalendarTools.delete)
+agent.register_tool("cal_find_free", CalendarTools.find_free)
+agent.register_tool("cal_google_status", CalendarTools.google_status)
+
+# Crypto (CoinGecko + análisis técnico)
+agent.register_tool("crypto_price", CryptoTools.price)
+agent.register_tool("crypto_prices_batch", CryptoTools.prices)
+agent.register_tool("crypto_convert", CryptoTools.convert)
+agent.register_tool("crypto_market", CryptoTools.market)
+agent.register_tool("crypto_trending", CryptoTools.trending)
+agent.register_tool("crypto_history", CryptoTools.history)
+agent.register_tool("crypto_technical_analysis", CryptoTools.analyze)
+agent.register_tool("crypto_generate_wallet", CryptoTools.generate_wallet)
+
+# Database (SQLite/Postgres/MySQL/Mongo)
+agent.register_tool("db_sqlite_query", DatabaseTools.sqlite_query)
+agent.register_tool("db_sqlite_tables", DatabaseTools.sqlite_tables)
+agent.register_tool("db_sqlite_backup", DatabaseTools.sqlite_backup)
+agent.register_tool("db_sqlite_diff", DatabaseTools.sqlite_diff)
+agent.register_tool("db_postgres_query", DatabaseTools.postgres_query)
+agent.register_tool("db_mysql_query", DatabaseTools.mysql_query)
+agent.register_tool("db_mongo_find", DatabaseTools.mongo_find)
+agent.register_tool("db_mongo_insert", DatabaseTools.mongo_insert)
+agent.register_tool("db_mongo_aggregate", DatabaseTools.mongo_aggregate)
+
+# Translation (Google/MyMemory/DeepL)
+agent.register_tool("translate_detect", TranslationTools.detect)
+agent.register_tool("translate_text", TranslationTools.translate)
+agent.register_tool("translate_batch", TranslationTools.translate_batch)
+agent.register_tool("translate_languages", TranslationTools.languages)
+
+# Code Review (metrics + linters + security)
+agent.register_tool("code_metrics", CodeReviewTools.metrics)
+agent.register_tool("code_security_scan", CodeReviewTools.security)
+agent.register_tool("code_flake8", CodeReviewTools.flake8)
+agent.register_tool("code_black_check", CodeReviewTools.black)
+agent.register_tool("code_full_review", CodeReviewTools.full)
+
+# Test Runner (pytest/unittest/jest/go/cargo)
+agent.register_tool("test_pytest", TestRunnerTools.pytest)
+agent.register_tool("test_unittest", TestRunnerTools.unittest)
+agent.register_tool("test_jest", TestRunnerTools.jest)
+agent.register_tool("test_go", TestRunnerTools.go)
+agent.register_tool("test_cargo", TestRunnerTools.cargo)
+agent.register_tool("test_auto", TestRunnerTools.auto)
+
+# Deployment (Vercel/Netlify/Railway/Docker/ssh/scp)
+agent.register_tool("deploy_detect", DeploymentTools.detect)
+agent.register_tool("deploy_vercel", DeploymentTools.vercel)
+agent.register_tool("deploy_netlify", DeploymentTools.netlify)
+agent.register_tool("deploy_railway", DeploymentTools.railway)
+agent.register_tool("deploy_docker_build", DeploymentTools.docker_build)
+agent.register_tool("deploy_docker_push", DeploymentTools.docker_push)
+agent.register_tool("deploy_docker_run", DeploymentTools.docker_run)
+agent.register_tool("deploy_docker_compose", DeploymentTools.compose_up)
+agent.register_tool("deploy_ssh", DeploymentTools.ssh)
+agent.register_tool("deploy_scp", DeploymentTools.scp)
+agent.register_tool("deploy_health_check", DeploymentTools.health)
+
+# PDF Professional (8 tipos de documentos empresariales)
+agent.register_tool("pdf_status", PDFProTools.status)
+agent.register_tool("pdf_create_contract", PDFProTools.create_contract)
+agent.register_tool("pdf_create_invoice", PDFProTools.create_invoice)
+agent.register_tool("pdf_create_report", PDFProTools.create_report)
+agent.register_tool("pdf_create_proposal", PDFProTools.create_proposal)
+agent.register_tool("pdf_create_resume", PDFProTools.create_resume)
+agent.register_tool("pdf_create_letter", PDFProTools.create_letter)
+agent.register_tool("pdf_create_nda", PDFProTools.create_nda)
+agent.register_tool("pdf_create_business_plan", PDFProTools.create_business_plan)
+agent.register_tool("pdf_create_whitepaper", PDFProTools.create_whitepaper)
+agent.register_tool("pdf_create_from_json", PDFProTools.create_from_json)
+agent.register_tool("pdf_list_templates", PDFProTools.list_templates)
+agent.register_tool("pdf_get_template", PDFProTools.get_template)
+agent.register_tool("pdf_list_palettes", PDFProTools.list_palettes)
+agent.register_tool("pdf_render_chart", PDFProTools.render_chart)
+
+# Video Pro (intro/promo/joiner/lower_third/slideshow + utilidades)
+agent.register_tool("video_status", VideoProTools.status)
+agent.register_tool("video_probe", VideoProTools.probe)
+agent.register_tool("video_convert", VideoProTools.convert)
+agent.register_tool("video_thumbnail", VideoProTools.thumbnail)
+agent.register_tool("video_thumbnail_grid", VideoProTools.thumbnail_grid)
+agent.register_tool("video_trim", VideoProTools.trim)
+agent.register_tool("video_export_for_platform", VideoProTools.export_for_platform)
+agent.register_tool("video_concat", VideoProTools.concat)
+agent.register_tool("video_detect_scenes", VideoProTools.detect_scenes)
+agent.register_tool("video_make_gif", VideoProTools.make_gif)
+agent.register_tool("video_add_watermark", VideoProTools.add_watermark)
+agent.register_tool("video_normalize_audio", VideoProTools.normalize_audio)
+agent.register_tool("video_extract_audio", VideoProTools.extract_audio)
+agent.register_tool("video_remove_audio", VideoProTools.remove_audio)
+agent.register_tool("video_slow_motion", VideoProTools.slow_motion)
+agent.register_tool("video_time_lapse", VideoProTools.time_lapse)
+agent.register_tool("video_reverse", VideoProTools.reverse)
+agent.register_tool("video_picture_in_picture", VideoProTools.picture_in_picture)
+agent.register_tool("video_side_by_side", VideoProTools.side_by_side)
+agent.register_tool("video_quality", VideoProTools.quality)
+agent.register_tool("video_intro", VideoProTools.intro)
+agent.register_tool("video_promo", VideoProTools.promo)
+agent.register_tool("video_lower_third", VideoProTools.lower_third)
+agent.register_tool("video_join_with_transitions", VideoProTools.join)
+agent.register_tool("video_slideshow", VideoProTools.slideshow)
+
+
+# --- EXPANDIR ALIASES (2500+ tools) ---
+try:
+    from tools.mega_tools import expand_registry_aliases
+    # AUTOMYX_MAX_ALIAS_PER_SEED controla cuántos prefijos aplicar por seed (default 3)
+    max_per_seed = int(os.environ.get("AUTOMYX_MAX_ALIAS_PER_SEED", "3"))
+    n_aliases = expand_registry_aliases(agent, max_per_seed=max_per_seed)
+    print(f"[AUTOMYX] ✅ {n_aliases} aliases coloquiales generados ({max_per_seed} prefijos/seed). Total tools registradas: {len(agent.tools)}")
+except Exception as e:
+    print(f"[AUTOMYX] ⚠️ mega_tools no se aplicó: {e}")
+
+
 # --- CREAR APLICACIÓN FASTAPI CON GATEWAY ---
 app, gateway = create_gateway_app(agent)
 
@@ -427,6 +786,82 @@ def load_all_tasks():
 
 
 load_all_tasks()
+
+
+# --- ENDPOINTS PARA VISTAS BESTIA 2026 ---
+@app.get("/api/sessions/list")
+async def list_sessions_endpoint(limit: int = 50, _: bool = Depends(verify_gateway_token)):
+    """Lista sesiones de chat recientes (sintetizadas desde aumformbring)."""
+    try:
+        mem = aumformbring_system.get_conversation_memory(limit=limit)
+        items = mem if isinstance(mem, list) else (mem.get("items") if isinstance(mem, dict) else [])
+        sessions = []
+        for i, it in enumerate(items):
+            md = it.get("metadata", {}) if isinstance(it, dict) else {}
+            sessions.append({
+                "id": (it.get("id") or it.get("conversation_id") or f"mem_{i}") if isinstance(it, dict) else f"mem_{i}",
+                "started_at": (it.get("timestamp") or it.get("ts") or "") if isinstance(it, dict) else "",
+                "duration_s": 0,
+                "model": md.get("model", "unknown") if isinstance(md, dict) else "unknown",
+                "messages": 1,
+                "tools": 0,
+                "status": "ok",
+            })
+        return {"sessions": sessions, "count": len(sessions)}
+    except Exception as e:
+        return {"sessions": [], "error": str(e)}
+
+
+@app.get("/api/usage")
+async def get_usage_endpoint(period: str = "week", _: bool = Depends(verify_gateway_token)):
+    """Estadísticas de uso (tokens, requests, costos) por período."""
+    try:
+        stats = aumformbring_system.get_stats() if hasattr(aumformbring_system, "get_stats") else {}
+        if isinstance(stats, dict):
+            total_conv = stats.get("total_conversations", 0) or 0
+            tokens_in = stats.get("total_input_tokens", 0) or 0
+            tokens_out = stats.get("total_output_tokens", 0) or 0
+        else:
+            total_conv, tokens_in, tokens_out = 0, 0, 0
+        # Estimación de costo (tarifas promedio USD/1k tokens)
+        cost = round((tokens_in * 0.000003) + (tokens_out * 0.000015), 4)
+        return {
+            "period": period,
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "requests": total_conv,
+            "cost": cost,
+            "by_model": {},
+            "by_tool": {},
+        }
+    except Exception as e:
+        return {"period": period, "tokens_in": 0, "tokens_out": 0, "requests": 0, "cost": 0, "by_model": {}, "by_tool": {}, "error": str(e)}
+
+
+@app.get("/api/error_learn/get_lessons")
+async def get_lessons_endpoint(limit: int = 50, _: bool = Depends(verify_gateway_token)):
+    """Lista lecciones de error aprendidas."""
+    try:
+        lessons = ErrorLearningSystem.get_all_lessons(limit=limit)
+        if isinstance(lessons, dict):
+            items = lessons.get("lessons", lessons.get("items", []))
+        elif isinstance(lessons, list):
+            items = lessons
+        else:
+            items = []
+        return {"lessons": items, "count": len(items)}
+    except Exception as e:
+        return {"lessons": [], "count": 0, "error": str(e)}
+
+
+@app.post("/api/error_learn/clear")
+async def clear_lessons_endpoint(_: bool = Depends(verify_gateway_token)):
+    """Limpia todas las lecciones de error."""
+    try:
+        ErrorLearningSystem.clear_lessons()
+        return {"status": "success"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 # --- ENDPOINTS EXISTENTES (COMPATIBILIDAD HACIA ATRÁS) ---
@@ -480,8 +915,180 @@ async def delete_task_endpoint(task_id: str, _: bool = Depends(verify_gateway_to
 async def universal_gateway_inbound(data: GatewayMessage, _: bool = Depends(verify_gateway_token)):
     """Endpoint universal para todos los canales"""
     try:
+        # Actualizar el modelo dinámicamente si el canal lo solicita
+        if data.model and data.model != agent.model_name:
+            agent.update_model(data.model)
+            
         result = agent.run(data.message)
         return {"reply": result, "channel": data.channel, "agent_used": data.agent_id}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# =============================================================================
+# ENDPOINTS v2.5: INTENTS, MULTI-TASK, CATÁLOGO
+# =============================================================================
+
+class IntentRequest(BaseModel):
+    text: str
+
+
+@app.post("/api/intent/analyze")
+async def analyze_intent_endpoint(req: IntentRequest, _: bool = Depends(verify_gateway_token)):
+    """Analiza el intent del usuario sin ejecutar nada (slang, typos, entidades)."""
+    try:
+        from core.intent_engine import understand, normalize_text, detect_intent
+        u = understand(req.text)
+        return {
+            "original": req.text,
+            "normalized": u["normalized"],
+            "intent": u["intent"],
+            "confidence": u["intent_confidence"],
+            "matched_keyword": u["matched_keyword"],
+            "entities": u["entities"],
+            "interpretation": u["interpretation"],
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/intent/keywords")
+async def intent_keywords_endpoint(_: bool = Depends(verify_gateway_token)):
+    """Lista todos los intents conocidos con sus keywords."""
+    try:
+        from core.intent_engine import INTENT_KEYWORDS
+        return {"intents": INTENT_KEYWORDS, "count": len(INTENT_KEYWORDS)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+class MultiTaskRequest(BaseModel):
+    message: str
+    session_id: str = "default"
+    model: str | None = None
+    agent_id: str = "main"
+
+
+@app.post("/api/multitask/submit")
+async def multitask_submit_endpoint(req: MultiTaskRequest, _: bool = Depends(verify_gateway_token)):
+    """Envía una tarea al dispatcher multi-task. Devuelve task_id para polling."""
+    try:
+        from core.multi_task import get_dispatcher
+        d = get_dispatcher()
+        task = d.submit(
+            user_input=req.message,
+            agent=agent,
+            session_id=req.session_id,
+            model=req.model,
+            agent_id=req.agent_id,
+        )
+        return {"status": "accepted", "task_id": task.task_id, "session_id": task.session_id}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/multitask/task/{task_id}")
+async def multitask_task_endpoint(task_id: str, _: bool = Depends(verify_gateway_token)):
+    """Obtiene el estado de una tarea multi-task."""
+    try:
+        from core.multi_task import get_dispatcher
+        d = get_dispatcher()
+        t = d.get_task(task_id)
+        if not t:
+            return {"error": f"Tarea {task_id} no encontrada"}
+        return t.to_dict()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/multitask/list")
+async def multitask_list_endpoint(
+    session_id: Optional[str] = None,
+    limit: int = 50,
+    _: bool = Depends(verify_gateway_token)
+):
+    """Lista tareas recientes (todas o filtradas por sesión)."""
+    try:
+        from core.multi_task import get_dispatcher
+        d = get_dispatcher()
+        tasks = d.list_tasks(session_id=session_id)
+        tasks = tasks[:limit]
+        return {
+            "tasks": [t.to_dict() for t in tasks],
+            "count": len(tasks),
+            "stats": d.stats(),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.delete("/api/multitask/task/{task_id}")
+async def multitask_cancel_endpoint(task_id: str, _: bool = Depends(verify_gateway_token)):
+    """Cancela una tarea en ejecución."""
+    try:
+        from core.multi_task import get_dispatcher
+        d = get_dispatcher()
+        ok = d.cancel(task_id)
+        return {"status": "cancelled" if ok else "not_found"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/multitask/stats")
+async def multitask_stats_endpoint(_: bool = Depends(verify_gateway_token)):
+    """Estadísticas del dispatcher multi-task."""
+    try:
+        from core.multi_task import get_dispatcher
+        return get_dispatcher().stats()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/skills/catalog")
+async def skills_catalog_endpoint(_: bool = Depends(verify_gateway_token)):
+    """Catálogo COMPLETO de skills con categorías (82+ skills, 500+ tools)."""
+    try:
+        from core.intent_engine import SKILLS_CATALOG, count_skills, count_tools_in_catalog
+        return {
+            "categories": SKILLS_CATALOG,
+            "total_skills": count_skills(),
+            "total_tools_in_catalog": count_tools_in_catalog(),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/tools/catalog")
+async def tools_catalog_endpoint(category: Optional[str] = None, _: bool = Depends(verify_gateway_token)):
+    """Catálogo de tools disponibles. Si category=sees, devuelve conteo por seed."""
+    try:
+        from tools.mega_tools import TOOL_SEEDS, count_aliases
+        canonical_tools = sorted(agent.tools.keys())
+        return {
+            "total_registered": len(canonical_tools),
+            "total_aliases_planned": count_aliases(max_per_seed=2),
+            "total_seeds": len(TOOL_SEEDS),
+            "categories": list(TOOL_SEEDS.keys())[:50],
+            "tools": canonical_tools,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/multitask/wait/{task_id}")
+async def multitask_wait_endpoint(
+    task_id: str,
+    timeout: float = 30.0,
+    _: bool = Depends(verify_gateway_token)
+):
+    """Bloquea hasta que la tarea termine (o timeout) y devuelve el resultado."""
+    try:
+        from core.multi_task import get_dispatcher
+        d = get_dispatcher()
+        t = d.wait(task_id, timeout=timeout)
+        if not t:
+            return {"error": f"Tarea {task_id} no encontrada"}
+        return t.to_dict()
     except Exception as e:
         return {"error": str(e)}
 

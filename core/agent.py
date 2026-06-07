@@ -2,15 +2,29 @@ import json
 import logging
 import re
 import sys
+import threading
+import time
 import requests
 import subprocess
 import os
+from datetime import datetime
 
-# Estado global para el frontend
+# Estado global para el frontend - enriquecido con fases claras
 agent_status = {
     "is_active": False,
-    "current_action": "Esperando...",
-    "reasoning": ""
+    "phase": "idle",  # idle | analyzing | thinking | tool_executing | tool_executed | responding | error
+    "current_action": "Esperando tu solicitud...",
+    "reasoning": "",
+    "user_request": "",
+    "step": 0,
+    "total_steps": 0,
+    "tool_name": "",
+    "tool_args_summary": "",
+    "tool_result_summary": "",
+    "tool_result_ok": None,
+    "error_message": "",
+    "started_at": None,
+    "last_update": None,
 }
 
 # Forzar codificación UTF-8 para evitar errores en Windows con emojis
@@ -20,14 +34,116 @@ if sys.stdout.encoding.lower() != 'utf-8':
     except Exception:
         pass
 
-from typing import List, Dict, Any, Callable
+from typing import List, Dict, Any, Callable, Optional
 from openai import OpenAI
 from colorama import Fore, Style
 from core.hardware_detector import hw_config
 from core.skills import SKILLS_REGISTRY
 
+# Sistemas de precisiÃ³n y auto-aprendizaje de errores
+try:
+    from tools.error_learning import ErrorLearningSystem
+except Exception:
+    ErrorLearningSystem = None
+try:
+    from tools.task_coordinator import TaskCoordinator
+except Exception:
+    TaskCoordinator = None
+
+# NÃºcleo nuevo: parser JSON blindado y terminal Rich
+try:
+    from core.json_protocol import parse_response, ParseResult, ToolCall, make_tool_call
+    JSON_PROTOCOL_AVAILABLE = True
+except Exception:
+    JSON_PROTOCOL_AVAILABLE = False
+    ParseResult = None
+    ToolCall = None
+    parse_response = None
+    make_tool_call = None
+
+try:
+    from core import terminal as term
+    TERMINAL_AVAILABLE = True
+except Exception:
+    TERMINAL_AVAILABLE = False
+    term = None
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Agent")
+
+
+# ---------------------------------------------------------------------------
+# Helpers de estado: el frontend ve transiciones claras de fase
+# ---------------------------------------------------------------------------
+_state_lock = threading.RLock() if 'threading' in dir() else __import__('threading').RLock()
+_progress_callback: Optional[Callable] = None
+
+
+def set_progress_callback(cb: Optional[Callable]) -> None:
+    """Registra un callback global de progreso (para streaming multi-tarea)."""
+    global _progress_callback
+    _progress_callback = cb
+
+
+def _set_phase(phase: str, action: str = "", **extras: Any) -> None:
+    """Actualiza el estado global de forma atómica y notifica."""
+    global agent_status
+    with _state_lock:
+        agent_status["phase"] = phase
+        if action:
+            agent_status["current_action"] = action
+        agent_status["last_update"] = datetime.now().isoformat()
+        for k, v in extras.items():
+            agent_status[k] = v
+    # Log interno
+    logger.debug(f"[phase={phase}] {action} | extras={extras}")
+    # Callback de progreso (multi-tarea)
+    if _progress_callback is not None:
+        try:
+            _progress_callback(phase, action, **extras)
+        except Exception:
+            pass
+
+
+def _truncate_args(args: Dict[str, Any], max_len: int = 80) -> str:
+    """Resumen corto de args para mostrar en UI."""
+    if not args:
+        return "(sin args)"
+    parts = []
+    for k, v in args.items():
+        sv = str(v)
+        if len(sv) > 30:
+            sv = sv[:27] + "..."
+        parts.append(f"{k}={sv}")
+    s = ", ".join(parts)
+    if len(s) > max_len:
+        s = s[:max_len - 3] + "..."
+    return s
+
+
+def _summarize_result(result: Any) -> str:
+    """Resumen amigable de un resultado de tool."""
+    if result is None:
+        return "(sin resultado)"
+    if isinstance(result, dict):
+        if "ok" in result:
+            ok = result["ok"]
+            err = result.get("error", "")
+            return f"ok={ok}" + (f" err={err[:60]}" if err else "")
+        if "error" in result:
+            return f"error: {str(result['error'])[:60]}"
+        if "count" in result:
+            return f"{result['count']} items"
+        if "output" in result:
+            return f"output: {str(result['output'])[:60]}"
+        # Resumen genÃ©rico
+        keys = list(result.keys())[:3]
+        return "{" + ", ".join(keys) + ("..." if len(result) > 3 else "") + "}"
+    if isinstance(result, str):
+        return result[:80] + ("..." if len(result) > 80 else "")
+    if isinstance(result, list):
+        return f"list[{len(result)}]"
+    return str(type(result).__name__)
 
 
 class OllamaManager:
@@ -179,9 +295,10 @@ class ModelProvider:
             )
         
         # Fallback
+        api_key = os.getenv("NVIDIA_API_KEY", "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")
         return OpenAI(
             base_url="https://integrate.api.nvidia.com/v1",
-            api_key="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"
+            api_key=api_key
         )
     
     @staticmethod
@@ -239,22 +356,35 @@ class AutomyxAgent:
         self.tools[name] = func
 
     def _parse_tool_calls(self, response_text: str) -> list:
+        """
+        Parsea tool calls usando el parser blindado de core/json_protocol.py.
+        5 capas: markdown fence → balanced braces → repair → regex → schema validation.
+        Retorna lista de dicts {action, args} compatible con el cÃ³digo existente.
+        """
+        if JSON_PROTOCOL_AVAILABLE and parse_response is not None:
+            try:
+                result: ParseResult = parse_response(response_text)
+                # Log calidad y reparaciones para debugging
+                if result.repairs_applied if hasattr(result, 'repairs_applied') else False:
+                    logger.info(f"[json_protocol] repairs: {getattr(result, 'repairs_applied', [])}")
+                if result.warnings:
+                    for w in result.warnings[:3]:
+                        logger.warning(f"[json_protocol] {w}")
+                # Convertir a dicts {action, args}
+                return [tc.to_dict() for tc in result.tool_calls]
+            except Exception as e:
+                logger.error(f"[json_protocol] error, fallback a parser legacy: {e}")
+
+        # --- FALLBACK: parser legacy de 2 pasos ---
         tool_calls = []
-        
-        # 1. Intentar extraer de bloques de código markdown
         matches = re.finditer(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL | re.IGNORECASE)
         for match in matches:
             try:
                 tool_calls.append(json.loads(match.group(1)))
             except json.JSONDecodeError:
                 pass
-                
         if tool_calls:
             return tool_calls
-            
-        # 2. Si no hay markdown, buscar objetos JSON crudos en el texto
-        # Buscamos estructuras que empiecen por { y terminen por }
-        # Usamos un parser simple de balance de llaves para extraer múltiples JSONs
         depth = 0
         start_idx = -1
         for i, char in enumerate(response_text):
@@ -272,190 +402,407 @@ class AutomyxAgent:
                         except json.JSONDecodeError:
                             pass
                     start_idx = -1
-                    
         return tool_calls
 
-    def run(self, user_input: str, custom_system_prompt: str = None, agent_skills: dict = None) -> str:
-        # --- FAST PATH (Para saludos o confirmaciones cortas no necesitamos gastar tiempo en el LLM pesado) ---
+    def _validate_tool_call(self, action: str, args: Dict[str, Any]) -> Optional[str]:
+        """
+        Valida un tool call antes de ejecutarlo. Retorna mensaje de error o None si OK.
+        """
+        if not action or not isinstance(action, str):
+            return f"AcciÃ³n invÃ¡lida (tipo {type(action).__name__})"
+        if action not in self.tools:
+            # Buscar tools similares (fuzzy)
+            from difflib import get_close_matches
+            similar = get_close_matches(action, list(self.tools.keys()), n=3, cutoff=0.5)
+            hint = f" Â¿Sabias usar {similar[0]}?" if similar else ""
+            return f"Herramienta '{action}' no existe. Disponibles: {len(self.tools)} tools. {hint}"
+        if not isinstance(args, dict):
+            return f"args debe ser dict, recibido {type(args).__name__}"
+
+        # Detectar tools que requieren argumentos pero recibieron args vacíos.
+        # Esto cubre el caso del regex_fallback_used: el LLM alucinó la action
+        # sin proporcionar 'args' (queda {} y la tool falla por falta de campos).
+        try:
+            import inspect
+            sig = inspect.signature(self.tools[action])
+            required_params = [
+                p.name for p in sig.parameters.values()
+                if p.default is inspect.Parameter.empty
+                and p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+                and p.name not in ("args", "kwargs")
+            ]
+            if required_params and not any(args.get(k) for k in required_params):
+                return (
+                    f"Faltan argumentos requeridos para '{action}': {required_params}. "
+                    f"Reintenta con el JSON completo, p.ej. "
+                    f'{{"action": "{action}", "args": {{"{required_params[0]}": "..."}}}}.'
+                )
+        except (TypeError, ValueError):
+            pass
+        return None
+
+    def _communicate_user_request(self, user_input: str) -> None:
+        """Muestra al usuario QUÉ entendió el agente de su solicitud."""
+        if not TERMINAL_AVAILABLE or term is None:
+            return
+        # Mostrar siempre un resumen claro
+        term.info(f"Solicitud recibida: \"{user_input[:120]}{'...' if len(user_input) > 120 else ''}\"")
+
+        # 1) Intentar con el motor de intents v2.5 (slang, typos, frases coloquiales)
+        intent_summary = None
+        try:
+            from core.intent_engine import understand
+            understanding = understand(user_input)
+            if understanding["intent"] != "unknown" and understanding["intent_confidence"] > 0.0:
+                verb = understanding["intent"].replace("_", " ")
+                conf = understanding["intent_confidence"]
+                intent_summary = f"Interpretado como: {verb} (confianza {conf:.0%})"
+                if understanding.get("entities", {}).get("folders"):
+                    intent_summary += f" → {', '.join(understanding['entities']['folders'])}"
+                if understanding.get("entities", {}).get("apps"):
+                    intent_summary += f" → apps: {', '.join(understanding['entities']['apps'][:3])}"
+        except Exception:
+            understanding = None
+
+        # 2) Fallback al TaskCoordinator
+        if not intent_summary and TaskCoordinator is not None:
+            try:
+                tc_intent = TaskCoordinator.parse_intent(user_input)
+                if tc_intent.get("action"):
+                    verb = tc_intent.get("action", "procesar")
+                    target = tc_intent.get("target", "")
+                    folder = tc_intent.get("folder_hint", "")
+                    intent_summary = f"Interpretado como: {verb}"
+                    if target:
+                        intent_summary += f" '{target}'"
+                    if folder:
+                        intent_summary += f" en {folder}"
+            except Exception:
+                pass
+
+        if intent_summary:
+            term.info(intent_summary)
+
+    def run(self, user_input: str, custom_system_prompt: str = None, agent_skills: dict = None,
+            agent_id: str = "main", progress_callback=None) -> str:
+        """Bucle principal del agente con fases claras y comunicación rica."""
+        # --- FAST PATH (saludos / confirmaciones cortas, sin gastar LLM) ---
         fast_responses = {
             "hola": "¡Hola! Estoy listo. ¿En qué te ayudo?",
             "estas ahi": "Sí, aquí estoy. Dime.",
             "estas ahí": "Sí, aquí estoy. Dime.",
             "estas ahi?": "Siempre activo. ¿Qué necesitas?",
-            "gracias": "¡De nada! Aquí sigo si me necesitas."
+            "gracias": "¡De nada! Aquí sigo si me necesitas.",
         }
         user_lower = user_input.strip().lower()
         if user_lower in fast_responses:
             self.history.append({"role": "user", "content": user_input})
             self.history.append({"role": "assistant", "content": fast_responses[user_lower]})
+            _set_phase("idle", "Esperando tu solicitud...")
             return fast_responses[user_lower]
-        # -------------------------------------------------------------------------------------------------
-        # Extraer herramientas disponibles en el prompt
+
+        # ---- FASE 1: ANALYZING (comprender quÃ© pidiÃ³ el usuario) ----
+        global agent_status
+        agent_status["is_active"] = True
+        agent_status["user_request"] = user_input
+        agent_status["started_at"] = datetime.now().isoformat()
+        agent_status["step"] = 0
+        agent_status["total_steps"] = 0
+        agent_status["error_message"] = ""
+        agent_status["tool_name"] = ""
+        agent_status["tool_args_summary"] = ""
+        agent_status["tool_result_summary"] = ""
+        agent_status["tool_result_ok"] = None
+        _set_phase("analyzing", f"Analizando tu solicitud: \"{user_input[:60]}{'...' if len(user_input) > 60 else ''}\"")
+        if progress_callback:
+            try: progress_callback("analyzing", f"Analizando: {user_input[:60]}")
+            except Exception: pass
+        self._communicate_user_request(user_input)
+
+        # Pre-procesar con intent engine v2.5: normaliza y agrega contexto
+        try:
+            from core.intent_engine import understand, resolve_tool_alias
+            understanding = understand(user_input)
+            if understanding["intent"] != "unknown":
+                intent_block = (
+                    f"\n[INTENT ENGINE v2.5]\n"
+                    f"Detecté que quieres: {understanding['intent']} "
+                    f"(confianza {understanding['intent_confidence']:.0%})\n"
+                    f"Texto normalizado: \"{understanding['normalized']}\"\n"
+                    f"Palabra clave: \"{understanding.get('matched_keyword', '')}\"\n"
+                    f"Entidades: {understanding.get('entities', {})}\n"
+                    f"INSTRUCCIÓN: Usa este intent para decidir la PRIMERA herramienta. "
+                    f"Si el intent es claro, ejecuta directamente sin pedir aclaración."
+                )
+                self.history.append({"role": "system", "content": intent_block})
+        except Exception:
+            pass
+
+        # Construir el system prompt con filtros de permisos
         tools_text = self.system_prompt.split("Herramienta")[1] if "Herramienta" in self.system_prompt else ""
-        
-        # Filtrar herramientas basadas en habilidades (skills)
         if agent_skills:
             if not agent_skills.get("write", True):
-                # Si no tiene permiso de escritura, bloquear herramientas de escritura/acción
-                blocked_tools = ["write_file", "append_to_file", "create_directory", "delete_file", "ai_form_filler", "create_tiktok_edit", "add_dynamic_zoom", "open_app_by_uri", "control_pc"]
+                blocked_tools = ["write_file", "append_to_file", "create_directory", "delete_file",
+                                 "ai_form_filler", "create_tiktok_edit", "add_dynamic_zoom",
+                                 "open_app_by_uri", "control_pc"]
                 for tool in blocked_tools:
-                    # Una forma rústica de ocultar la herramienta del prompt es reemplazar su nombre
                     tools_text = tools_text.replace(f"Herramienta: {tool}", f"Herramienta Bloqueada (Sin Permiso): {tool}")
-            
             if not agent_skills.get("pc", True):
-                # Si no tiene permiso de PC, bloquear shell y control de UI
-                blocked_tools = ["execute_shell", "open_app_by_uri", "control_pc", "press_hotkey", "type_text", "check_system_resources", "play_youtube_video", "play_tiktok_desktop_video", "generate_vyrex_video"]
+                blocked_tools = ["execute_shell", "open_app_by_uri", "control_pc", "press_hotkey",
+                                 "type_text", "check_system_resources", "play_youtube_video",
+                                 "play_tiktok_desktop_video", "generate_vyrex_video"]
                 for tool in blocked_tools:
                     tools_text = tools_text.replace(f"Herramienta: {tool}", f"Herramienta Bloqueada (Sin Permiso): {tool}")
 
-        # Si se provee un prompt personalizado (para agentes específicos), actualizamos el primer mensaje
         hw_context = f"\n[INFO DEL SISTEMA]\nOS: {self.hw.os_name} | Arch: {self.hw.arch} | UserDir: {self.hw.user_home}\nHardware: {self.hw.gpu_vendor} | Backend: {self.hw.acceleration_backend}"
-        
+
         if custom_system_prompt:
             if self.history and self.history[0]["role"] == "system":
                 full_custom_prompt = f"{custom_system_prompt}\n\n[REGLAS DEL SISTEMA Y HERRAMIENTAS]\nDebes usar JSON para las herramientas.{hw_context}\nHerramienta{tools_text}"
                 self.history[0]["content"] = full_custom_prompt
         else:
-            # Restaurar el prompt original si volvemos al principal
             if self.history and self.history[0]["role"] == "system":
-                # Aplicamos el filtro de herramientas al prompt principal también si aplica
                 self.history[0]["content"] = self.system_prompt.split("Herramienta")[0] + f"Herramienta{hw_context}" + tools_text
 
         self.history.append({"role": "user", "content": user_input})
-        
-        global agent_status
-        agent_status["is_active"] = True
-        agent_status["current_action"] = f"Analizando solicitud: {user_input[:30]}..."
-        agent_status["reasoning"] = ""
-        
+
+        # Inyectar lecciones aprendidas de errores previos (no alucinar)
+        if ErrorLearningSystem is not None:
+            try:
+                warnings = ErrorLearningSystem.get_warnings_for_request(user_input)
+                if warnings:
+                    self.history.append({"role": "system", "content": warnings})
+            except Exception:
+                pass
+
+        # Plan autogenerado para tareas complejas
+        if TaskCoordinator is not None:
+            try:
+                intent = TaskCoordinator.parse_intent(user_input)
+                if intent.get("action") in ("reeditar", "editar", "convertir", "organizar", "buscar", "crear") and intent.get("folder_hint"):
+                    plan = TaskCoordinator.build_plan(user_input)
+                    plan_summary = TaskCoordinator.summarize_plan(plan)
+                    self.history.append({"role": "system", "content": f"[PLAN AUTOGENERADO - SÃGUELO]\n{plan_summary}\n\nUsa los archivos candidatos detectados. NO inventes rutas."})
+                    if TERMINAL_AVAILABLE and term:
+                        term.info("Plan estructurado generado. Lo voy a seguir paso a paso.")
+            except Exception:
+                pass
+
         final_answer = ""
-        recent_actions = [] # Memoria a corto plazo para evitar bucles
-        
-        while True:
-            # Limitamos el historial para que no explote, pero mantenemos una buena memoria (ej. últimos 20 mensajes)
+        recent_actions: List[str] = []  # anti-loop
+
+        # ---- BUCLE PRINCIPAL ----
+        max_iterations = 15  # safety net
+        for iteration in range(max_iterations):
+            agent_status["step"] = iteration + 1
+
+            # Truncar historial para no explotar
             if len(self.history) > 21:
-                # Mantenemos el system prompt (index 0) y los últimos 20 mensajes
                 self.history = [self.history[0]] + self.history[-20:]
 
-            # Llamar a OpenAI (Nvidia) SIN streaming para máxima velocidad
+            # ---- FASE 2: THINKING (llamar al LLM) ----
+            _set_phase("thinking", f"Pensando cÃ³mo responder (paso {iteration+1})...")
+            if TERMINAL_AVAILABLE and term:
+                term.llm_thinking()
+
+            ai_message = ""
+            reasoning_accumulated = ""
+            actual_model = ModelProvider.get_display_name(self.model_name)
+            api_error: Optional[str] = None
+
             try:
-                # Indicador visual rápido
-                print(f"\n[LLM] Evaluando: {user_input[:50]}...")
-                print(f"{Fore.CYAN}[*] Procesando...{Style.RESET_ALL}", end="\r")
-                sys.stdout.flush()
-                
-                agent_status["current_action"] = "Procesando razonamiento en la red neuronal..."
-                
-                # Inferencia usando el modelo seleccionado en la UI (self.model_name)
-                actual_model = ModelProvider.get_display_name(self.model_name)
+                completion = self.client.chat.completions.create(
+                    model=actual_model,
+                    messages=self.history,
+                    temperature=0.7,
+                    top_p=0.95,
+                    max_tokens=4096,
+                    stream=True,
+                )
+                if TERMINAL_AVAILABLE and term:
+                    term.llm_response_stream("")  # marca inicio de stream
+                for chunk in completion:
+                    if not getattr(chunk, "choices", None) or len(chunk.choices) == 0:
+                        continue
+                    delta = chunk.choices[0].delta
+                    if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                        reasoning_accumulated += delta.reasoning_content
+                        agent_status["reasoning"] = reasoning_accumulated
+                    if getattr(delta, "content", None) is not None:
+                        ai_message += delta.content
+                if TERMINAL_AVAILABLE and term:
+                    term.llm_response_done()
+            except Exception as api_err:
+                # Fallback: modelo seguro
+                _set_phase("error", f"Error con {self.model_name}, usando fallback...")
+                if TERMINAL_AVAILABLE and term:
+                    term.warn(f"Error con modelo principal: {api_err}. Probando fallback.")
+                api_error = str(api_err)
                 try:
                     completion = self.client.chat.completions.create(
-                        model=actual_model,
-                        messages=self.history,
-                        temperature=0.7,
-                        top_p=0.95,
-                        max_tokens=4096,
-                        stream=True  # ACTIVADO STREAMING PARA MAYOR VELOCIDAD DE RESPUESTA
-                    )
-                    
-                    # Manejar el streaming y acumular la respuesta
-                    ai_message = ""
-                    reasoning_accumulated = ""
-                    
-                    print(f"\n{Fore.GREEN}[IA]: {Style.RESET_ALL}", end="")
-                    
-                    for chunk in completion:
-                        if not getattr(chunk, "choices", None) or len(chunk.choices) == 0:
-                            continue
-                            
-                        delta = chunk.choices[0].delta
-                        
-                        # Extraer razonamiento si el modelo lo soporta (ej. deepseek-r1)
-                        if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                            reasoning_accumulated += delta.reasoning_content
-                            agent_status["reasoning"] = reasoning_accumulated
-                        
-                        # Extraer contenido real
-                        if getattr(delta, "content", None) is not None:
-                            content_piece = delta.content
-                            ai_message += content_piece
-                            
-                            # Imprimir en consola en tiempo real si no es un JSON oculto
-                            if not ai_message.strip().startswith("{"):
-                                print(content_piece, end="", flush=True)
-                                
-                    print() # Salto de línea al terminar
-                    
-                except Exception as api_err:
-                    print(f"\n{Fore.RED}[!] Error con el modelo {self.model_name}, cayendo a fallback seguro... {str(api_err)}{Style.RESET_ALL}")
-                    agent_status["current_action"] = "Error en red principal, usando fallback seguro..."
-                    completion = self.client.chat.completions.create(
-                        model="gpt-oss-120b", 
+                        model="openai/gpt-oss-120b",
                         messages=self.history,
                         temperature=0.1,
                         max_tokens=4096,
-                        stream=False
+                        stream=False,
                     )
                     ai_message = completion.choices[0].message.content
-                
-                # Limpiar indicador visual
-                sys.stdout.write("\033[K")
-                sys.stdout.flush()
-                
-            except Exception as e:
-                return f"Error conectando con OpenAI (Nvidia): {str(e)}."
+                except Exception as e2:
+                    msg = f"Error conectando con OpenAI (Nvidia): {e2}"
+                    _set_phase("error", msg, error_message=msg)
+                    if TERMINAL_AVAILABLE and term:
+                        term.error(msg)
+                    agent_status["is_active"] = False
+                    return msg
 
             self.history.append({"role": "assistant", "content": ai_message})
-            
-            # Comprobar si quiere usar herramientas
+
+            # ---- FASE 3: PARSE TOOL CALLS ----
             tool_calls = self._parse_tool_calls(ai_message)
-            if tool_calls:
-                all_results_msg = ""
-                for tool_call in tool_calls:
-                    if "action" in tool_call:
-                        action = tool_call["action"]
-                        args = tool_call.get("args", {})
-                        
-                        # Protección contra bucles repetitivos
-                        action_signature = f"{action}_{str(args)}"
-                        if recent_actions.count(action_signature) >= 2:
-                            error_msg = f"SISTEMA: Has intentado ejecutar '{action}' con los mismos argumentos varias veces sin éxito. DETENTE y busca otra solución."
-                            all_results_msg += error_msg + "\n"
-                            print(f"{Fore.RED}[!] Bucle detectado. Forzando a la IA a cambiar de estrategia.{Style.RESET_ALL}")
-                            continue
-                        
-                        recent_actions.append(action_signature)
-                        if len(recent_actions) > 10:
-                            recent_actions.pop(0)
-                        
-                        if action in self.tools:
-                            agent_status["current_action"] = f"Ejecutando proceso autónomo: {action}..."
-                            try:
-                                tool_result = self.tools[action](**args)
-                                result_msg = f"Herramienta {action} ejecutada. Resultado: {tool_result}"
-                                print(f"{Fore.YELLOW}[OK] Ejecutó: {action}{Style.RESET_ALL}")
-                            except Exception as e:
-                                result_msg = f"Error ejecutando {action}: {str(e)}"
-                                print(f"{Fore.RED}[ERROR] Error en {action}: {str(e)}{Style.RESET_ALL}")
-                        else:
-                            result_msg = f"Error: Herramienta {action} no existe."
-                            
-                        all_results_msg += result_msg + "\n"
-                
-                if all_results_msg:
-                    all_results_msg += "\nSI HAS TERMINADO LA TAREA, EXPLICA LO QUE HICISTE. SI NO, EJECUTA LA SIGUIENTE HERRAMIENTA INMEDIATAMENTE."
-                    self.history.append({"role": "system", "content": all_results_msg})
-                    # Continuar el bucle infinito para que decida el siguiente paso
-                else:
-                    final_answer = ai_message
-                    break
-            else:
-                # Si no hay llamada a herramienta, es la respuesta final y rompemos el bucle
+            if not tool_calls:
+                # No hay tool calls → respuesta final
+                _set_phase("responding", "Generando respuesta final...")
+                if progress_callback:
+                    try: progress_callback("responding", "Generando respuesta final", progress=0.95)
+                    except Exception: pass
+                if TERMINAL_AVAILABLE and term:
+                    term.success("Tarea completada, preparando respuesta final.")
                 final_answer = ai_message
                 break
-                
+
+            # ---- FASE 4: EJECUTAR CADA TOOL CALL CON VALIDACIÓN Y COMUNICACIÓN ----
+            _set_phase("tool_executing", f"Ejecutando {len(tool_calls)} herramienta(s)...")
+            all_results_msg = ""
+            loop_detected = False
+
+            for idx, tool_call in enumerate(tool_calls, 1):
+                if "action" not in tool_call:
+                    msg = f"[Tool {idx}] No se encontrÃ³ 'action' en tool_call. Ignorando."
+                    if TERMINAL_AVAILABLE and term:
+                        term.warn(msg)
+                    all_results_msg += msg + "\n"
+                    continue
+
+                action = tool_call["action"]
+                args = tool_call.get("args", {}) or {}
+
+                # 4.0: Resolver aliases coloquiales (ej: "guardar_archivo" → "write_file")
+                try:
+                    from core.intent_engine import resolve_tool_alias
+                    resolved = resolve_tool_alias(action)
+                    if resolved != action and resolved in self.tools:
+                        if TERMINAL_AVAILABLE and term:
+                            term.debug(f"alias: {action} → {resolved}")
+                        action = resolved
+                except Exception:
+                    pass
+
+                # 4.1: Validar el tool call
+                validation_error = self._validate_tool_call(action, args)
+                if validation_error:
+                    _set_phase("error", f"ValidaciÃ³n fallÃ³: {validation_error[:80]}", error_message=validation_error)
+                    if TERMINAL_AVAILABLE and term:
+                        term.error(f"ValidaciÃ³n: {validation_error}")
+                    all_results_msg += f"[Tool {idx}] {validation_error}\n"
+                    continue
+
+                # 4.2: DetecciÃ³n de loop
+                action_signature = f"{action}_{json.dumps(args, sort_keys=True)}"
+                if recent_actions.count(action_signature) >= 2:
+                    loop_detected = True
+                    if TERMINAL_AVAILABLE and term:
+                        term.tool_loop_warning(action, recent_actions.count(action_signature))
+                    all_results_msg += (
+                        f"SISTEMA: DetectÃ© que intentaste '{action}' con los mismos argumentos "
+                        f"{recent_actions.count(action_signature)} veces sin Ã©xito. DETENTE y prueba otra estrategia.\n"
+                    )
+                    continue
+                recent_actions.append(action_signature)
+                if len(recent_actions) > 10:
+                    recent_actions.pop(0)
+
+                # 4.3: Comunicar QUÃ‰ voy a hacer
+                args_summary = _truncate_args(args)
+                agent_status["tool_name"] = action
+                agent_status["tool_args_summary"] = args_summary
+                _set_phase("tool_executing",
+                          f"[{idx}/{len(tool_calls)}] Ejecutando {action}({args_summary})",
+                          tool_name=action, tool_args_summary=args_summary)
+                if TERMINAL_AVAILABLE and term:
+                    term.tool_executing(action, args)
+
+                # 4.4: Ejecutar la tool con medición de tiempo
+                t0 = time.time()
+                tool_result: Any = None
+                tool_exc: Optional[BaseException] = None
+                if progress_callback:
+                    try: progress_callback("tool_executing", f"Ejecutando {action}", step=iteration+1, tool_name=action)
+                    except Exception: pass
+                try:
+                    tool_result = self.tools[action](**args)
+                except Exception as e:
+                    tool_exc = e
+                duration_ms = int((time.time() - t0) * 1000)
+                if progress_callback:
+                    try: progress_callback("tool_executed", f"{action} listo en {duration_ms}ms", step=iteration+1, tool_name=action)
+                    except Exception: pass
+
+                # 4.5: Procesar resultado y comunicar
+                if tool_exc is not None:
+                    result_msg = f"Error ejecutando {action}: {tool_exc}"
+                    ok = False
+                    summary = f"exception: {str(tool_exc)[:60]}"
+                    _set_phase("error", f"{action} fallÃ³: {str(tool_exc)[:60]}",
+                              error_message=str(tool_exc), tool_result_summary=summary, tool_result_ok=False)
+                    if TERMINAL_AVAILABLE and term:
+                        term.tool_result(action, ok=False, summary=summary)
+                    # Registrar para aprendizaje
+                    if ErrorLearningSystem is not None:
+                        try:
+                            ErrorLearningSystem.log_error(action, args, str(tool_exc), context=user_input[:200])
+                        except Exception:
+                            pass
+                else:
+                    result_msg = f"Herramienta {action} ejecutada en {duration_ms}ms. Resultado: {tool_result}"
+                    if isinstance(tool_result, dict):
+                        ok = bool(tool_result.get("ok", True)) and not tool_result.get("error")
+                        if tool_result.get("error") and ErrorLearningSystem is not None:
+                            try:
+                                ErrorLearningSystem.log_error(action, args, str(tool_result["error"]), context=user_input[:200])
+                            except Exception:
+                                pass
+                    else:
+                        ok = True
+                    summary = _summarize_result(tool_result)
+                    _set_phase("tool_executed",
+                              f"{action} completado en {duration_ms}ms: {summary}",
+                              tool_result_summary=summary, tool_result_ok=ok)
+                    if TERMINAL_AVAILABLE and term:
+                        term.tool_result(action, ok=ok, summary=f"{summary} ({duration_ms}ms)")
+
+                all_results_msg += result_msg + "\n"
+
+            # ---- FASE 5: FEEDBACK AL MODELO ----
+            if loop_detected:
+                all_results_msg += "\nâš ï¸ SISTEMA: Hubo un bucle. Cambia de estrategia o finaliza con lo que tengas."
+            if all_results_msg.strip():
+                all_results_msg += "\n\nSIGUIENTE PASO: Si ya completaste la tarea, explica el resultado en espaÃ±ol sin JSON. Si aÃºn falta, ejecuta la siguiente herramienta."
+                self.history.append({"role": "system", "content": all_results_msg})
+            else:
+                final_answer = ai_message
+                break
+        else:
+            # Safety net: si alcanzamos max_iterations
+            if TERMINAL_AVAILABLE and term:
+                term.warn(f"Alcanzado lÃ­mite de {max_iterations} iteraciones. Cerrando con respuesta parcial.")
+            final_answer = ai_message if ai_message else "He realizado varias acciones pero el bucle alcanzÃ³ el lÃ­mite. AquÃ­ estÃ¡ lo Ãºltimo que hice:\n" + all_results_msg
+
+        # ---- FASE 6: CIERRE ----
+        _set_phase("idle", "Listo. Esperando tu siguiente solicitud.")
         agent_status["is_active"] = False
-        agent_status["current_action"] = "Esperando..."
-        agent_status["reasoning"] = ""
-        
+        agent_status["step"] = 0
+        agent_status["total_steps"] = 0
+        if TERMINAL_AVAILABLE and term:
+            term.success(f"Respuesta final lista ({len(final_answer)} caracteres).")
+
         return final_answer

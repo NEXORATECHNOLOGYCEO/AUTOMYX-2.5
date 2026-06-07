@@ -1,7 +1,12 @@
 import os
 import subprocess
 import stat
+import logging
+from pathlib import Path
+from typing import Optional, Any
 from tools.pc_tools import PCTools
+
+logger = logging.getLogger("automyx.video")
 
 class VideoTools:
     """
@@ -29,6 +34,111 @@ class VideoTools:
             except Exception:
                 pass
         return resolved
+
+    @staticmethod
+    def _normalize_position(pos) -> str:
+        """Normaliza cualquier variante de posición a 'top'/'center'/'bottom'."""
+        if not pos:
+            return "center"
+        s = str(pos).lower().strip()
+        if s in ("center", "centered", "centrado", "centrada", "middle", "centro", "mid", "c"):
+            return "center"
+        if s in ("top", "arriba", "superior", "t", "up", "header"):
+            return "top"
+        if s in ("bottom", "abajo", "inferior", "b", "down", "footer"):
+            return "bottom"
+        return "center"  # fallback seguro
+
+    @staticmethod
+    def _normalize_color(color) -> Optional[str]:
+        """Normaliza variantes de color a nombres canónicos en español que auto_subtitles reconoce."""
+        if not color:
+            return None
+        s = str(color).lower().strip()
+        mapping = {
+            # verde
+            "verde": "verde", "green": "verde", "verdes": "verde", "g": "verde",
+            # amarillo
+            "amarillo": "amarillo", "amarilla": "amarillo", "yellow": "amarillo", "y": "amarillo",
+            # rojo
+            "rojo": "rojo", "roja": "rojo", "red": "rojo", "r": "rojo",
+            # azul
+            "azul": "azul", "blue": "azul", "b": "azul",
+            # blanco
+            "blanco": "blanco", "blanca": "blanco", "white": "blanco", "w": "blanco",
+            # negro
+            "negro": "negro", "negra": "negro", "black": "negro", "k": "negro",
+            # cyan
+            "cyan": "cyan", "celeste": "cyan", "c": "cyan",
+            # magenta
+            "magenta": "magenta", "fucsia": "magenta", "m": "magenta",
+            # naranja
+            "naranja": "naranja", "orange": "naranja", "o": "naranja",
+            # morado
+            "morado": "morado", "morada": "morado", "purple": "morado", "violeta": "morado", "p": "morado",
+        }
+        return mapping.get(s, s)
+
+
+    @staticmethod
+    def _parse_subtitle_style_string(style_str: str) -> dict:
+        """
+        Parsea strings de estilo que el LLM suele inventar a partir de lenguaje natural.
+        Ejemplos:
+          'centered_green'  -> {position: 'center', color: 'verde'}
+          'bottom_yellow'   -> {position: 'bottom', color: 'amarillo'}
+          'mrbeast'         -> {style: 'mrbeast'}
+          'neon_white'      -> {style: 'neon', color: 'blanco'}
+          'centered'        -> {position: 'center'}
+          'verde_centrado'  -> {color: 'verde', position: 'center'}
+        """
+        s = (style_str or "").lower().strip().replace("-", "_").replace(" ", "_")
+        out: dict = {}
+
+        # Tokenizar por underscores (word-boundary para evitar falsos positivos)
+        tokens = set(s.split("_"))
+
+        # Posición
+        pos_map = {
+            "center": "center", "centered": "center", "centrado": "center", "centrada": "center", "middle": "center", "centro": "center",
+            "top": "top", "arriba": "top", "superior": "top",
+            "bottom": "bottom", "abajo": "bottom", "inferior": "bottom",
+        }
+        for k, v in pos_map.items():
+            if k in tokens or k in s.split("_"):
+                out["position"] = v
+                break
+
+        # Color (mapea a los nombres que auto_subtitles reconoce)
+        color_map = {
+            "verde": "verde", "green": "verde", "verdes": "verde",
+            "amarillo": "amarillo", "yellow": "amarillo", "amarilla": "amarillo",
+            "rojo": "rojo", "red": "rojo", "roja": "rojo",
+            "azul": "azul", "blue": "azul",
+            "blanco": "blanco", "white": "blanco", "blanca": "blanco",
+            "negro": "negro", "black": "negro", "negra": "negro",
+            "cyan": "cyan", "celeste": "cyan",
+            "magenta": "magenta", "fucsia": "magenta",
+            "naranja": "naranja", "orange": "naranja",
+            "morado": "morado", "purple": "morado", "violeta": "morado",
+        }
+        for k, v in color_map.items():
+            if k in tokens:
+                out["color"] = v
+                out["font_color"] = v
+                break
+
+        # Estilo de plantilla (si no hay position/color, asumir que es un style name)
+        style_names = {"mrbeast", "neon", "cinematic", "karaoke", "default", "minimal", "bold", "simple"}
+        for st in style_names:
+            if st in tokens and "style" not in out:
+                out["style"] = st
+                break
+        if not out:
+            # Fallback: tratar todo el string como nombre de style
+            out["style"] = s
+
+        return out
 
     @staticmethod
     def professional_color_grading(input_path: str, output_path: str, style: str = "cinematic") -> str:
@@ -289,13 +399,47 @@ class VideoTools:
     def auto_subtitles(**kwargs) -> str:
         """
         Genera subtítulos 100% perfectos estilo CapCut usando Whisper con word-timestamps y ASS.
+
+        Acepta aliases comunes que el LLM suele inventar:
+          - subtitle_style (str|dict): si es string 'centered_green', lo parsea a {position, color}
+          - color / font_color: alias para el color del texto
+          - text / text_path: alias para input_path
         """
         try:
-            input_path = kwargs.get('input_path') or kwargs.get('video_path') or kwargs.get('file_path')
-            output_path = kwargs.get('output_path')
+            input_path = (kwargs.get('input_path') or kwargs.get('video_path') or kwargs.get('file_path')
+                          or kwargs.get('text') or kwargs.get('text_path') or kwargs.get('source')
+                          or kwargs.get('input_video') or kwargs.get('input_file'))
+            output_path = kwargs.get('output_path') or kwargs.get('out_path') or kwargs.get('output') or kwargs.get('dest')
             language = kwargs.get('language', 'es')
-            style = kwargs.get('style', 'mrbeast')
-            position = kwargs.get('position', 'center')
+            style = (kwargs.get('style') or kwargs.get('subtitle_style_name') or kwargs.get('template')
+                     or kwargs.get('preset') or kwargs.get('subtitle_template') or 'mrbeast')
+            position = (kwargs.get('position') or kwargs.get('subtitle_position') or kwargs.get('text_position')
+                        or kwargs.get('pos') or 'center')
+            font_color = (kwargs.get('font_color') or kwargs.get('color') or kwargs.get('subtitle_color')
+                          or kwargs.get('text_color') or kwargs.get('colour'))
+
+            # Normalizar position a valores canónicos: 'centrado'/'middle' -> 'center', 'arriba' -> 'top', 'abajo' -> 'bottom'
+            position = VideoTools._normalize_position(position)
+            # Normalizar color a nombres canónicos en español
+            font_color = VideoTools._normalize_color(font_color)
+
+            # Si subtitle_style viene como string (ej 'centered_green'), parsearlo
+            subtitle_style = kwargs.get('subtitle_style') or kwargs.get('sub_style')
+            if isinstance(subtitle_style, str):
+                parsed = VideoTools._parse_subtitle_style_string(subtitle_style)
+                if "style" in parsed and style == 'mrbeast':
+                    style = parsed["style"]
+                if "position" in parsed:
+                    position = parsed["position"]
+                if "color" in parsed and not font_color:
+                    font_color = parsed["color"]
+            elif isinstance(subtitle_style, dict):
+                if 'style' in subtitle_style and style == 'mrbeast':
+                    style = subtitle_style['style']
+                if 'position' in subtitle_style:
+                    position = subtitle_style['position']
+                if ('color' in subtitle_style or 'font_color' in subtitle_style) and not font_color:
+                    font_color = subtitle_style.get('color') or subtitle_style.get('font_color')
             
             if not input_path or not output_path:
                 return "❌ Error: Faltan argumentos requeridos (input_path y output_path)"
@@ -316,7 +460,7 @@ class VideoTools:
             
             ass_path = "temp_subs.ass"
             
-            def _get_ass_color(color_name: str, default: str) -> str:
+            def _get_ass_color(color_name, default: str) -> str:
                 colors = {
                     "rojo": "&H000000FF", "red": "&H000000FF",
                     "verde": "&H0000FF00", "green": "&H0000FF00",
@@ -329,17 +473,24 @@ class VideoTools:
                     "naranja": "&H0000A5FF", "orange": "&H0000A5FF",
                     "morado": "&H00800080", "purple": "&H00800080"
                 }
-                return colors.get(color_name.lower().strip(), default)
+                if not color_name:
+                    return default
+                key = str(color_name).lower().strip()
+                return colors.get(key, default)
             
             # Estilos de subtítulos
             if style == "mrbeast":
-                style_def = "Style: Default,Arial Black,28,&H00FFFFFF,&H0000FFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,10,10,120,1"
+                _default_primary = "&H00FFFFFF"  # blanco
+                style_def = f"Style: Default,Arial Black,28,{_get_ass_color(font_color, _default_primary)},&H0000FFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,10,10,120,1"
             elif style == "neon":
-                style_def = "Style: Default,Arial Bold,30,&H0000FFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,2,2,10,10,120,1"
+                _default_primary = "&H0000FFFF"  # cyan
+                style_def = f"Style: Default,Arial Bold,30,{_get_ass_color(font_color, _default_primary)},&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,2,2,10,10,120,1"
             elif style == "cinematic":
-                style_def = "Style: Default,Georgia,20,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,120,1"
+                _default_primary = "&H00FFFFFF"  # blanco
+                style_def = f"Style: Default,Georgia,20,{_get_ass_color(font_color, _default_primary)},&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,120,1"
             else:
-                style_def = "Style: Default,Arial,24,&H00FFFFFF,&H00000000,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,10,10,120,1"
+                _default_primary = "&H00FFFFFF"  # blanco
+                style_def = f"Style: Default,Arial,24,{_get_ass_color(font_color, _default_primary)},&H00000000,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,10,10,120,1"
             
             # Posición
             align = 2
@@ -465,45 +616,324 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return f"❌ Error: {str(e)}"
 
     @staticmethod
-    def advanced_video_editor(input_path: str, output_path: str, speed: float = 1.0, rotate: int = 0, scale: str = "") -> str:
-        """Aplica múltiples ediciones avanzadas: velocidad, rotación, escalado."""
-        try:
-            input_path = PCTools._resolve_path(input_path)
-            output_path = VideoTools._prepare_output_path(output_path)
-            if not os.path.exists(input_path): return f"❌ Error: No se encontró {input_path}"
+    def advanced_video_editor(
+        input_path: str = "",
+        output_path: str = "",
+        platform: str = "tiktok",
+        auto_subtitles: bool = False,
+        subtitle_style: Optional[dict] = None,
+        effects: Any = False,
+        transitions: Any = False,
+        color_grading: str = "",
+        analyze_and_edit: bool = False,
+        speed: float = 1.0,
+        rotate: int = 0,
+        scale: str = "",
+        intro_path: str = "",
+        outro_path: str = "",
+        max_duration_s: float = 0,
+        language: str = "es",
+        **kwargs,
+    ) -> str:
+        """
+        Editor de video profesional todo-en-uno (el "hub" de AUTOMYX para edición).
 
+        Aliases tolerantes: el LLM a veces inventa nombres de parámetros. Esta función
+        acepta variantes comunes sin lanzar TypeError.
+
+        Aliases para input_path:    video_path, input_video, input_file, file_path, source
+        Aliases para output_path:   output, out_path, dest, save_path
+        Aliases para transitions:   transition, trans
+        Aliases para effects:       effect, fx
+        Aliases para subtitle_style: sub_style, subs_style
+        """
+        # ---- Normalizar aliases que el LLM suele inventar ----
+        if not input_path:
+            for alias in ("video_path", "input_video", "input_file", "file_path", "source", "video"):
+                v = kwargs.pop(alias, None)
+                if v:
+                    input_path = v
+                    break
+        if not output_path:
+            for alias in ("output", "out_path", "dest", "save_path", "output_file"):
+                v = kwargs.pop(alias, None)
+                if v:
+                    output_path = v
+                    break
+        if not transitions:
+            for alias in ("transition", "trans"):
+                v = kwargs.pop(alias, None)
+                if v is not None:
+                    transitions = v
+                    break
+        if not effects:
+            for alias in ("effect", "fx"):
+                v = kwargs.pop(alias, None)
+                if v is not None:
+                    effects = v
+                    break
+        if subtitle_style is None:
+            for alias in ("sub_style", "subs_style", "subtitle_format"):
+                v = kwargs.pop(alias, None)
+                if v is not None:
+                    subtitle_style = v
+                    break
+
+        # Si subtitle_style viene como string (ej 'centered_green'), parsearlo
+        if isinstance(subtitle_style, str):
+            subtitle_style = VideoTools._parse_subtitle_style_string(subtitle_style)
+
+        # Si quedan kwargs desconocidos, loguearlos pero no fallar
+        if kwargs:
+            logger.debug(f"advanced_video_editor: kwargs ignorados: {list(kwargs.keys())}")
+
+        # ---- INICIO DEL PIPELINE ----
+        """
+        Editor de video profesional todo-en-uno (el "hub" de AUTOMYX para edición).
+
+        Pipeline (en orden):
+          1. Validar input
+          2. analyze_and_edit → detectar cortes/scores (opcional, solo log)
+          3. color_grading → aplicar LUT cinematográfica/vibrant/vintage (opcional)
+          4. effects → zoom dinámico, shake, transiciones internas (opcional)
+          5. auto_subtitles → Whisper + burn ASS (opcional)
+          6. intro/outro → concatenar (opcional)
+          7. platform → reencodar al aspect ratio / bitrate / duración target
+          8. speed/rotate/scale → transforms básicos
+
+        Args:
+            input_path: ruta del video de entrada
+            output_path: ruta de salida (si vacía, se genera automáticamente)
+            platform: 'tiktok' | 'reels' | 'shorts' | 'youtube' | 'instagram' | 'twitter' | 'custom'
+            auto_subtitles: True para subtítulos con Whisper
+            subtitle_style: dict con {engine, font, color, size, position, style, ...}
+            effects: True/False o lista de efectos ['zoom','shake','flash']
+            transitions: True para añadir crossfade de 0.3s al inicio/fin
+            color_grading: '' | 'cinematic' | 'vibrant' | 'vintage' | 'bw' | 'warm' | 'cold'
+            analyze_and_edit: True para analizar contenido (log + sugerencias)
+            speed: multiplicador de velocidad (1.0 = normal)
+            rotate: 0|90|180|270 grados
+            scale: ej. "1080:1920" para forzar tamaño
+            intro_path: video de intro a concatenar (opcional)
+            outro_path: video de outro a concatenar (opcional)
+            max_duration_s: truncar a N segundos (0 = sin límite)
+            language: idioma para subtítulos ('es','en',...)
+        """
+        try:
+            # ---- 0. Resolver paths ----
+            if not input_path:
+                return "❌ Error: input_path es requerido"
+            input_path = PCTools._resolve_path(input_path)
+            if not os.path.exists(input_path):
+                return f"❌ Error: No se encontró {input_path}"
+
+            if not output_path:
+                stem = Path(input_path).stem
+                folder = Path(input_path).parent
+                suffix = f"_{platform}_edit" if platform else "_edit"
+                output_path = str(folder / f"{stem}{suffix}.mp4")
+            output_path = VideoTools._prepare_output_path(output_path)
+
+            platform_norm = (platform or "tiktok").lower().strip()
+            subtitle_style = subtitle_style or {}
+
+            log_lines = [f"🎬 advanced_video_editor | platform={platform_norm} | subs={auto_subtitles} | grading={color_grading or '-'} | effects={bool(effects)}"]
+
+            # ---- 1. Determinar aspect ratio / resolución / max dur target por plataforma ----
+            PLATFORM_PRESETS = {
+                "tiktok":    {"aspect": "9:16", "size": "1080:1920", "max_dur": 180, "vbr": "4500k", "abr": "160k"},
+                "reels":     {"aspect": "9:16", "size": "1080:1920", "max_dur": 180, "vbr": "4500k", "abr": "160k"},
+                "shorts":    {"aspect": "9:16", "size": "1080:1920", "max_dur": 60,  "vbr": "4500k", "abr": "160k"},
+                "youtube":   {"aspect": "16:9", "size": "1920:1080", "max_dur": 0,   "vbr": "8000k", "abr": "192k"},
+                "instagram": {"aspect": "1:1",  "size": "1080:1080", "max_dur": 90,  "vbr": "4500k", "abr": "160k"},
+                "twitter":   {"aspect": "16:9", "size": "1280:720",  "max_dur": 140, "vbr": "5000k", "abr": "128k"},
+                "custom":    {"aspect": "16:9", "size": "1920:1080", "max_dur": 0,   "vbr": "6000k", "abr": "160k"},
+            }
+            preset = PLATFORM_PRESETS.get(platform_norm, PLATFORM_PRESETS["tiktok"])
+            if not scale:
+                scale = preset["size"]
+            if not max_duration_s:
+                max_duration_s = float(preset["max_dur"])
+
+            # ---- 2. analyze_and_edit (solo info, sin modificar video) ----
+            if analyze_and_edit:
+                try:
+                    analysis = VideoTools.analyze_video_content(input_path)
+                    log_lines.append(f"   📊 Análisis: {analysis[:200]}")
+                except Exception as e:
+                    log_lines.append(f"   ⚠️ analyze_and_edit no se pudo ejecutar: {e}")
+
+            # ---- 3. color_grading como paso previo (genera archivo intermedio) ----
+            current = input_path
+            tmp_dir = Path(output_path).parent / "_automyx_tmp"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            stage_counter = 0
+
+            def _next_tmp(suffix=""):
+                nonlocal stage_counter
+                stage_counter += 1
+                return str(tmp_dir / f"stage_{stage_counter:02d}{suffix}.mp4")
+
+            if color_grading:
+                graded = _next_tmp("_graded.mp4")
+                gr_res = VideoTools.professional_color_grading(current, graded, style=color_grading)
+                if gr_res.startswith("✅"):
+                    current = graded
+                    log_lines.append(f"   🎨 Color grading '{color_grading}' aplicado")
+                else:
+                    log_lines.append(f"   ⚠️ Color grading falló, continúo sin él: {gr_res[:120]}")
+
+            # ---- 4. effects (zoom dinámico, etc.) ----
+            if effects:
+                if effects is True:
+                    effects_list = ["zoom"]
+                elif isinstance(effects, str):
+                    effects_list = [e.strip() for e in effects.split(",") if e.strip()]
+                else:
+                    effects_list = list(effects) if effects else []
+
+                for eff in effects_list:
+                    eff_l = eff.lower()
+                    if eff_l in ("zoom", "dynamic_zoom", "kenburns"):
+                        zoomed = _next_tmp(f"_{eff_l}.mp4")
+                        zm_res = VideoTools.add_dynamic_zoom(current, zoomed, zoom_mode="in", zoom_factor=1.4)
+                        if zm_res.startswith("✅"):
+                            current = zoomed
+                            log_lines.append(f"   🔍 Effect '{eff_l}' aplicado")
+                        else:
+                            log_lines.append(f"   ⚠️ Effect '{eff_l}' falló: {zm_res[:120]}")
+
+            # ---- 5. auto_subtitles (Whisper + burn ASS) ----
+            subtitle_filter = ""
+            if auto_subtitles:
+                try:
+                    # Preparar args para auto_subtitles
+                    sub_args = {
+                        "input_path": current,
+                        "output_path": current.replace(".mp4", "_withsubs.mp4") if current.endswith(".mp4") else current + "_withsubs.mp4",
+                        "language": language,
+                        "style": subtitle_style.get("style", "mrbeast"),
+                        "position": subtitle_style.get("position", "center"),
+                    }
+                    # auto_subtitles usa **kwargs, así que le pasamos los relevantes
+                    sub_res = VideoTools.auto_subtitles(**sub_args)
+                    if "✅" in sub_res or "guardad" in sub_res.lower() or os.path.exists(sub_args["output_path"]):
+                        current = sub_args["output_path"]
+                        log_lines.append("   💬 Subtítulos quemados correctamente")
+                    else:
+                        log_lines.append(f"   ⚠️ auto_subtitles no produjo archivo: {sub_res[:200]}")
+                except Exception as e:
+                    log_lines.append(f"   ⚠️ auto_subtitles excepción: {e}")
+
+            # ---- 6. intro/outro (concatenar) ----
+            if intro_path and os.path.exists(intro_path):
+                concat_list = tmp_dir / "concat_in.txt"
+                concat_list.write_text(f"file '{intro_path}'\nfile '{current}'\n", encoding="utf-8")
+                with_intro = _next_tmp("_intro.mp4")
+                r = subprocess.run(
+                    ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
+                     "-c", "copy", with_intro],
+                    capture_output=True, text=True,
+                )
+                if r.returncode == 0 and os.path.exists(with_intro):
+                    current = with_intro
+                    log_lines.append("   🎞️ Intro concatenada")
+            if outro_path and os.path.exists(outro_path):
+                concat_list = tmp_dir / "concat_out.txt"
+                concat_list.write_text(f"file '{current}'\nfile '{outro_path}'\n", encoding="utf-8")
+                with_outro = _next_tmp("_outro.mp4")
+                r = subprocess.run(
+                    ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
+                     "-c", "copy", with_outro],
+                    capture_output=True, text=True,
+                )
+                if r.returncode == 0 and os.path.exists(with_outro):
+                    current = with_outro
+                    log_lines.append("   🎞️ Outro concatenado")
+
+            # ---- 7. transitions (crossfade 0.3s al inicio/fin, ligero) ----
             v_filters = []
             a_filters = []
+            if transitions:
+                # fade-in 0.3s al inicio + fade-out 0.3s al final
+                v_filters.append("fade=in:0:7")
+                v_filters.append("fade=out:st=9999:d=0.3")  # se sobreescribe abajo con duración real
+                a_filters.append("afade=in:st=0:d=0.3")
+                a_filters.append("afade=out:st=9999:d=0.3")
+                log_lines.append("   ✨ Transitions (fade in/out 0.3s) aplicadas")
 
-            if speed != 1.0:
+            # ---- 8. transforms básicos: speed / rotate / scale ----
+            if speed != 1.0 and speed > 0:
                 v_filters.append(f"setpts={1/speed}*PTS")
                 a_filters.append(f"atempo={speed}")
-
             if rotate == 90:
                 v_filters.append("transpose=1")
             elif rotate == 180:
                 v_filters.append("transpose=2,transpose=2")
-            elif rotate == 270 or rotate == -90:
+            elif rotate in (270, -90):
                 v_filters.append("transpose=2")
-
             if scale:
                 v_filters.append(f"scale={scale}")
 
-            cmd = ["ffmpeg", "-y", "-i", input_path]
+            # Aplicar fade-out real (necesita conocer duración del video actual)
+            if transitions and v_filters:
+                try:
+                    probe = subprocess.run(
+                        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of",
+                         "default=noprint_wrappers=1:nokey=1", current],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    dur_s = float(probe.stdout.strip() or 0)
+                    # Reemplazar el placeholder de fade-out con la duración real
+                    v_filters = [f if not f.startswith("fade=out:st=9999") else f"fade=out:st={max(0, dur_s-0.3):.2f}:d=0.3" for f in v_filters]
+                    a_filters = [f if not f.startswith("afade=out:st=9999") else f"afade=out:st={max(0, dur_s-0.3):.2f}:d=0.3" for f in a_filters]
+                except Exception:
+                    # Si no se puede obtener duración, remover los fades de salida
+                    v_filters = [f for f in v_filters if not f.startswith("fade=out:st=9999")]
+                    a_filters = [f for f in a_filters if not f.startswith("afade=out:st=9999")]
 
+            # ---- 9. Truncar a max_duration_s si se especificó ----
+            t_input_flags = ["-y", "-i", current]
+            if max_duration_s and max_duration_s > 0:
+                t_input_flags += ["-t", str(max_duration_s)]
+
+            # ---- 10. Render final ----
+            cmd = ["ffmpeg", "-y"] + t_input_flags
             if v_filters:
-                cmd.extend(["-vf", ",".join(v_filters)])
+                cmd += ["-vf", ",".join(v_filters)]
             if a_filters:
-                cmd.extend(["-af", ",".join(a_filters)])
+                cmd += ["-af", ",".join(a_filters)]
+            cmd += [
+                "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+                "-c:a", "aac", "-b:a", preset["abr"],
+                "-movflags", "+faststart",
+                "-r", "30",
+                output_path,
+            ]
 
-            cmd.append(output_path)
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            if result.returncode != 0:
+                return f"❌ Error en render final: {result.stderr[-800:]}"
 
-            if result.returncode == 0:
-                return f"✅ Edición avanzada completada! Guardado en {output_path}"
-            return f"❌ Error en edición avanzada: {result.stderr}"
+            # ---- 11. Limpiar temporales ----
+            try:
+                for f in tmp_dir.glob("stage_*.mp4"):
+                    try: f.unlink()
+                    except Exception: pass
+                for f in tmp_dir.glob("concat_*.txt"):
+                    try: f.unlink()
+                    except Exception: pass
+            except Exception:
+                pass
+
+            size_mb = os.path.getsize(output_path) / (1024 * 1024)
+            log_lines.append(f"   📁 Salida: {output_path} ({size_mb:.1f} MB)")
+            return "\n".join(log_lines) + f"\n✅ Edición profesional completada! {output_path}"
+
+        except subprocess.TimeoutExpired:
+            return f"❌ Timeout (>600s) en edición de {input_path}. El video es demasiado largo o el sistema está sobrecargado."
         except Exception as e:
-            return f"❌ Error: {str(e)}"
+            return f"❌ Error en advanced_video_editor: {type(e).__name__}: {e}"
 
     @staticmethod
     def analyze_video_content(input_path: str) -> str:

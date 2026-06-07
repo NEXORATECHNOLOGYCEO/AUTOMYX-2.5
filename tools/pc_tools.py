@@ -79,10 +79,28 @@ class PCTools:
         """Escribe contenido en un archivo. Lo crea si no existe, o lo sobrescribe.
         Maneja automáticamente archivos binarios (PDF, imágenes, etc.) y de texto."""
         try:
-            file_path = kwargs.get('file_path') or kwargs.get('path') or kwargs.get('file')
-            content = kwargs.get('content') or kwargs.get('text') or kwargs.get('data') or b""
+            file_path = (
+                kwargs.get('file_path')
+                or kwargs.get('path')
+                or kwargs.get('file')
+                or kwargs.get('filename')
+                or kwargs.get('name')
+                or kwargs.get('destination')
+            )
+            content = (
+                kwargs.get('content')
+                or kwargs.get('text')
+                or kwargs.get('data')
+                or kwargs.get('body')
+                or kwargs.get('contents')
+                or b""
+            )
             if not file_path:
-                return "❌ Error: Debes proporcionar el argumento 'file_path'."
+                return ("❌ Error en write_file: falta el argumento 'file_path'. "
+                        "Formato JSON requerido: {\"action\": \"write_file\", "
+                        "\"args\": {\"file_path\": \"C:\\\\ruta\\\\archivo.txt\", "
+                        "\"content\": \"texto o base64\"}}. "
+                        "NUNCA llames write_file sin 'file_path' y 'content'.")
                 
             file_path = PCTools._resolve_path(file_path)
                 
@@ -144,9 +162,20 @@ class PCTools:
         """Crea una carpeta en la ruta especificada."""
         try:
             # Aceptar varios nombres de argumento por si la IA se confunde
-            dir_path = kwargs.get('dir_path') or kwargs.get('path') or kwargs.get('directory') or kwargs.get('folder') or kwargs.get('directory_path') or kwargs.get('folder_path')
+            dir_path = (
+                kwargs.get('dir_path')
+                or kwargs.get('path')
+                or kwargs.get('directory')
+                or kwargs.get('folder')
+                or kwargs.get('directory_path')
+                or kwargs.get('folder_path')
+                or kwargs.get('name')
+                or kwargs.get('dir')
+            )
             if not dir_path:
-                return "❌ Error: Debes proporcionar el argumento 'dir_path' con la ruta de la carpeta."
+                return ("❌ Error en create_directory: falta el argumento 'dir_path'. "
+                        "Formato JSON requerido: {\"action\": \"create_directory\", "
+                        "\"args\": {\"dir_path\": \"C:\\\\Users\\\\COMPUMAX\\\\Downloads\\\\NuevaCarpeta\"}}.")
                 
             dir_path = PCTools._resolve_path(dir_path)
             

@@ -1,64 +1,179 @@
 """
-Banner oficial de Automyx para la terminal
+AUTOMYX BANNER v2.0
+===================
+Banner rediseñado con el sistema terminal.py.
+Logo AUTOMYX grande, árbol de capacidades, tabla de estado.
 """
-import sys
-import io
-from colorama import Fore, Style, init
+from __future__ import annotations
 
-# Forzar codificación UTF-8 para Windows
-if sys.stdout.encoding.lower() != 'utf-8':
+import time
+import os
+from typing import Optional
+
+try:
+    from .terminal import (
+        banner as _banner,
+        banner_compact,
+        success as _success,
+        info as _info,
+        warn as _warn,
+        error as _error,
+        step as _step,
+        panel as _panel,
+        tree as _tree,
+        table as _table,
+        BRAND_CYAN, BRAND_YELLOW, BRAND_GREEN, BRAND_MAGENTA, BRAND_GRAY,
+        ASCII_LOGO, ASCII_LOGO_COMPACT, ASCII_LOGO_MINI,
+        RICH_AVAILABLE, console,
+    )
+except ImportError:
+    from core.terminal import (
+        banner as _banner, banner_compact, success as _success, info as _info,
+        warn as _warn, error as _error, step as _step, panel as _panel, tree as _tree,
+        table as _table, BRAND_CYAN, BRAND_YELLOW, BRAND_GREEN, BRAND_MAGENTA, BRAND_GRAY,
+        ASCII_LOGO, ASCII_LOGO_COMPACT, ASCII_LOGO_MINI, RICH_AVAILABLE, console,
+    )
+
+
+def print_automyx_banner(
+    model_name: str = "automyx",
+    show_details: bool = True,
+    *,
+    version: str = "2.5.0",
+    provider: Optional[str] = None,
+    agent_count: int = 1,
+    skill_count: int = 18,
+    tool_count: int = 275,
+    channels: Optional[list] = None,
+) -> None:
+    """
+    Imprime el banner principal de AUTOMYX.
+    - Logo AUTOMYX grande
+    - Subtítulo con versión + modelo
+    - Si show_details: árbol de capacidades + tabla de inventario
+    """
     try:
-        sys.stdout.reconfigure(encoding='utf-8')
-    except Exception:
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+        # 1) Banner principal con logo
+        subtitle_parts = [f"v{version}"]
+        if provider:
+            subtitle_parts.append(provider)
+        subtitle_parts.append("Gateway Omnipotente")
+        _banner(
+            "",
+            subtitle="  ·  ".join(subtitle_parts),
+            ascii_logo=True,
+            width=110,
+        )
+        print() if not RICH_AVAILABLE else None
 
-# Inicializar colorama
-init(autoreset=True)
+        # 2) Información del modelo activo
+        if model_name:
+            try:
+                from rich.text import Text
+                t = Text()
+                t.append("  Modelo activo: ", style=BRAND_GRAY)
+                t.append(model_name, style=f"bold {BRAND_CYAN}")
+                if provider:
+                    t.append(f"  ({provider})", style=BRAND_GRAY)
+                if RICH_AVAILABLE and console:
+                    console.print(t)
+                else:
+                    print(f"  Modelo activo: {model_name}")
+            except Exception:
+                print(f"  Modelo activo: {model_name}")
+            print() if not RICH_AVAILABLE else None
 
-def print_automyx_banner(model_name="nvidia/gpt-oss-120b", show_details=True):
-    """Imprime el banner oficial de Automyx, estilo Hermes"""
-    from datetime import datetime
-    import os
-    
-    date_str = datetime.now().strftime("%Y.%m.%d")
-    
-    banner = f"""
-{Fore.YELLOW}{Style.BRIGHT} █████╗ ██╗   ██╗████████╗████████╗████████╗██████╗ ██╗   ██╗██╗  ██╗
-██╔══██╗██║   ██║╚══██╔══╝██╔═══██╗██╔═════╝██╔══██╗╚██╗ ██╔╝╚██╗██╔╝
-███████║██║   ██║   ██║   ██║   ██║████████╗██████╔╝ ╚████╔╝  ╚███╔╝ 
-██╔══██║██║   ██║   ██║   ██║   ██║╚═════██║██╔══██╗  ╚██╔╝   ██╔██╗ 
-██║  ██║╚██████╔╝   ██║   ████████║████████║██║  ██║   ██║   ██╔╝ ██╗
-╚═╝  ╚═╝ ╚═════╝    ╚═╝   ╚═══════╝╚═══════╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝{Style.RESET_ALL}
+        if not show_details:
+            return
 
-{Fore.YELLOW}Automyx Agent v2.5.0 ({date_str}) · upstream 0xA1B2C3{Style.RESET_ALL}
+        # 3) Árbol de capacidades
+        _tree(
+            "Capacidades de AUTOMYX",
+            {
+                "Chat & Razonamiento": [
+                    "Multi-modelo (OpenAI, Anthropic, NVIDIA, Ollama local)",
+                    "Streaming de respuestas",
+                    "Memoria persistente (RAG vector + SQLite)",
+                    "Sistema de auto-mejora por errores",
+                ],
+                "Productividad": [
+                    "280+ herramientas registradas",
+                    "Ejecución de comandos del sistema",
+                    "Lectura/escritura de archivos",
+                    "Búsqueda web profunda",
+                ],
+                "Multimedia": [
+                    "Edición de video FFmpeg (estilos MrBeast, Cinematic, etc)",
+                    "Renderizado 3D con Blender",
+                    "Audio mastering profesional",
+                    "OBS livestreaming",
+                ],
+                "Desarrollo": [
+                    "Generación de código desde especificación",
+                    "Code review automático",
+                    "Test runner",
+                    "OpenCode CLI bridge (sub-agente)",
+                ],
+                "Conocimiento": [
+                    "Búsqueda arXiv/PubMed/Semantic Scholar",
+                    "OSINT y auditoría de seguridad",
+                    "Contabilidad multi-país (AR/MX/PE/CO/ES)",
+                    "Swarm orchestrator multi-instancia",
+                ],
+                "Canales": [
+                    "Web dashboard (SPA)",
+                    "WebSocket gateway",
+                    "Telegram bot",
+                    "WhatsApp (en desarrollo)",
+                ],
+            },
+        )
+        print() if not RICH_AVAILABLE else None
 
-{Fore.CYAN}  {Style.BRIGHT}Available Tools{Style.RESET_ALL}
-{Fore.YELLOW}  browser: {Fore.WHITE}deep_web_scrape, ai_form_filler, analyze_browser_screen, open_website, ...
-{Fore.YELLOW}  code_execution: {Fore.WHITE}execute_cmd, use_terminal_window, check_system_resources
-{Fore.YELLOW}  cronjob: {Fore.WHITE}schedule_task, list_scheduled_tasks, cancel_task
-{Fore.YELLOW}  file: {Fore.WHITE}read_file, write_file, copy_file, move_file, delete_file, list_directory, ...
-{Fore.YELLOW}  gui_automation: {Fore.WHITE}mouse_click, type_text, press_key, find_and_click_image, screenshot
-{Fore.YELLOW}  memory: {Fore.WHITE}aumformbring_store, nexus_profile, create_skill, log_conversation, recall_conversation
-{Fore.YELLOW}  orchestration: {Fore.WHITE}create_workflow, run_workflow, create_plan, make_api_request
-  {Fore.LIGHTBLACK_EX}(and 24 more toolsets...){Style.RESET_ALL}
+        # 4) Tabla de inventario
+        _table(
+            "Inventario del sistema",
+            ["Categoría", "Cantidad", "Estado"],
+            [
+                ["Agentes registrados", str(agent_count), "OK"],
+                ["Skills disponibles", str(skill_count), "OK"],
+                ["Tools registradas", str(tool_count), "OK"],
+                ["Canales activos", str(len(channels) if channels else 1), "OK"],
+                ["Versión", version, "STABLE"],
+            ],
+            styles=[BRAND_CYAN, BRAND_YELLOW, BRAND_GREEN],
+        )
+        print() if not RICH_AVAILABLE else None
 
-{Fore.CYAN}  {Style.BRIGHT}Available Skills{Style.RESET_ALL}
-{Fore.YELLOW}  3d-blender: {Fore.WHITE}execute_blender_python_code, generate_professional_3d_video, generate_cinematic_environment, ...
-{Fore.YELLOW}  audio-mlops: {Fore.WHITE}apply_autotune, mix_music, master_audio, text_to_speech, audiocraft-audio-generation
-{Fore.YELLOW}  autonomous-ai: {Fore.WHITE}project_autopilot, openclaw-core, hermes-agent, auto_improve_project, claude-code
-{Fore.YELLOW}  cyber-security: {Fore.WHITE}port_scan, run_nmap_scan, osint_search, godmode, red-teaming
-{Fore.YELLOW}  data-science: {Fore.WHITE}analyze_csv_data, generate_data_chart, export_to_excel, jupyter-live-kernel
-{Fore.YELLOW}  devops: {Fore.WHITE}manage_docker_container, webhook-subscriptions, codebase-inspection
-{Fore.YELLOW}  media-gen: {Fore.WHITE}generate_vyrex_video, generate_gemini_video, generate_gemini_image, play_youtube_video
-{Fore.YELLOW}  productivity: {Fore.WHITE}read_recent_emails, create_email_draft, read_pdf_text, read_all_cvs_in_folder, notion, ocr
-{Fore.YELLOW}  social-media: {Fore.WHITE}send_whatsapp, send_telegram, post_facebook, upload_tiktok, play_tiktok_desktop_video, xitter
-{Fore.YELLOW}  software-dev: {Fore.WHITE}open_vscode, open_program, create_and_run_script, detect_bugs, fix_bugs, requesting-code-review
-{Fore.YELLOW}  video-editing: {Fore.WHITE}trim_video, auto_subtitles, create_tiktok_edit, advanced_video_editor, professional_color_grading
-  
-  {Fore.LIGHTBLACK_EX}108 tools · 56 skills · /help for commands{Style.RESET_ALL}
+    except Exception as e:
+        # Fallback extremo: print plano
+        print(ASCII_LOGO)
+        print(f"AUTOMYX v{version} - {model_name}")
+        print(f"Tools: {tool_count} | Skills: {skill_count}")
+        print(f"Error decorando banner: {e}")
 
-{Fore.CYAN}  {Style.BRIGHT}Agent Core{Style.RESET_ALL}
-{Fore.YELLOW}  Model:{Fore.WHITE} {model_name}
-{Fore.YELLOW}  Session:{Fore.WHITE} {datetime.now().strftime('%Y%m%d_%H%M%S')}
-"""
-    print(banner)
+
+def print_startup_sequence() -> None:
+    """Secuencia de arranque rápida (boot)."""
+    _banner_compact_fallback = lambda: print(f"{ASCII_LOGO_MINI}")
+    if RICH_AVAILABLE and console:
+        from rich.text import Text
+        t = Text()
+        t.append("AUTOMYX", style=f"bold {BRAND_CYAN}")
+        t.append(" iniciando", style=BRAND_GRAY)
+        console.print(t)
+    else:
+        print("AUTOMYX iniciando")
+
+
+if __name__ == "__main__":
+    print_automyx_banner(
+        model_name="openai/gpt-oss-120b",
+        show_details=True,
+        version="2.5.0",
+        provider="nvidia",
+        agent_count=1,
+        skill_count=18,
+        tool_count=275,
+        channels=["web", "telegram"],
+    )

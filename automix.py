@@ -87,17 +87,11 @@ Ejemplos:
         return
     
     if args.command == "onboard":
-        print("Bienvenido a Automyx!")
-        print("=" * 50)
-        
-        print(f"\nConfiguración inicial:")
-        print(f"   Archivo de configuración: {config.config_file}")
-        print(f"   Token de acceso generado: {config.get('gateway.auth.token')}")
-        
-        print("\nConfiguración completada!")
-        print("\nSiguientes pasos:")
-        print("  1. Ejecuta 'automix gateway' para iniciar el servicio")
-        print("  2. Abre el panel de control con 'automix dashboard'")
+        try:
+            from core.onboard import run_onboarding
+            run_onboarding()
+        except KeyboardInterrupt:
+            print("\nOperación cancelada por el usuario.")
         return
     
     if args.command == "dashboard":
