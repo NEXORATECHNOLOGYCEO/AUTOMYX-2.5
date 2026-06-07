@@ -2,7 +2,7 @@
 
 <img src="assets/logo.png" alt="Automyx Logo" width="180"/>
 
-# 🧠 AUTOMYX CORE 2.5
+#  AUTOMYX 2.5
 
 ### The Most Powerful Autonomous AI Engine — On Your PC, Your Pi, or Your Pocket.
 
