@@ -1657,6 +1657,16 @@ async def clear_chat_endpoint(_: bool = Depends(verify_gateway_token)):
     return {"status": "success", "message": "Memoria reiniciada"}
 
 
+@app.post("/api/clear_memory")
+async def clear_memory_endpoint(_: bool = Depends(verify_gateway_token)):
+    agent.clear_memory()
+    try:
+        aumformbring_system.clear_all_memory()
+    except Exception:
+        pass
+    return {"status": "success", "message": "Memoria del agente y recuerdos eliminados"}
+
+
 @app.post("/api/chat")
 async def chat_endpoint(req: ChatRequest, request: Request, _: bool = Depends(verify_gateway_token)):
     from fastapi.responses import StreamingResponse
