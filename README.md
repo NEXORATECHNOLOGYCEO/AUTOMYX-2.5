@@ -377,6 +377,17 @@ The dashboard is a single-page Glassmorphism UI served from `frontend/index.html
 
 **Theme:** Cyberpunk / High-Tech Glassmorphism (Rajdhani + Inter fonts, cyan/magenta accents).
 
+### 📸 Screenshots
+
+| | |
+|---|---|
+| **Multitarea** — Vista general de tareas en paralelo | **Multitarea** — Dos procesos simultáneos |
+| <img src="docs/screenshots/multitarea_overview.png" width="400"/> | <img src="docs/screenshots/multitarea_dual_process.png" width="400"/> |
+| **Multitarea en paralelo** | **Tareas programadas** |
+| <img src="docs/screenshots/multitarea_paralelo.png" width="400"/> | <img src="docs/screenshots/tareas_programadas.png" width="400"/> |
+| **Chat** — Interfaz principal de conversación | **Catálogo de habilidades** — 86 skills disponibles |
+| <img src="docs/screenshots/chat_section.png" width="400"/> | <img src="docs/screenshots/catalogo_habilidades.png" width="400"/> |
+
 ---
 
 ## 🧠 The Multi-Task Dispatcher
