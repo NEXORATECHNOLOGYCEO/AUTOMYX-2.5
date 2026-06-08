@@ -230,6 +230,16 @@ The `automix.py` CLI is the single entry point. Run `python automix.py --help` f
 | `python automix.py catalog` | Show all skills × tools matrix |
 | `python automix.py intent "ahorita guardame esto"` | Inspect intent classification |
 | `python automix.py memory search "..."` | Search AUMFORMBRING memory |
+| `python automix.py memory stats` | AUMFORMBRING statistics |
+| `python automix.py memory skills` | List auto-learned skills |
+| `python automix.py memory patterns` | Show usage patterns |
+| `python automix.py memory recent` | Recent conversations |
+| `python automix.py memory forget <id>` | Forget a conversation |
+| `python automix.py error stats` | Error learning statistics |
+| `python automix.py error lessons` | Show learned lessons |
+| `python automix.py error cascades` | Show cascade failures |
+| `python automix.py auto-learning cycle` | Run full evolution cycle |
+| `python automix.py auto-learning report` | Evolution report |
 | `python automix.py telegram` | Start the Telegram bot |
 | `python automix.py whatsapp` | Start the WhatsApp bridge |
 | `python automix.py tui` | Launch the terminal UI (TUI) |
@@ -404,20 +414,172 @@ X-Gateway-Token: <your_token>
 
 ---
 
-## 🧪 AUMFORMBRING — The Memory System
+## 🧪 AUMFORMBRING — Auto-Learning & Self-Evolution Engine
 
-AUMFORMBRING is Automyx's **self-learning perpetual memory**:
-- ✅ Remembers every interaction
-- ✅ Decays old knowledge to avoid context bloat
-- ✅ Vector search via `memory-rag-vector` skill
-- ✅ Auto-extracts **learned patterns** (`learned_patterns.json`)
-- ✅ Auto-forges **new skills** (`learned_skills.json`) at runtime
-- ✅ Persistent in `state/automyx.sqlite` (no scattered JSONs)
+AUMFORMBRING is Automyx's **self-learning perpetual memory and auto-evolution engine**. It doesn't just remember — it learns from mistakes, discovers patterns, forges new skills automatically, and improves itself over time without human intervention.
 
-Inspect memory:
+### 🔄 How It Works
+
+```
+Every conversation → stored in AUMFORMBRING memory
+     ↓
+Every 5 conversations → AutoLearningOrchestrator runs a full evolution cycle:
+     ↓
+1. ErrorLearningSystem → analiza errores recurrentes → candidatos a skill
+2. SkillForger → detecta patrones → forja nuevas skills automáticamente
+3. Auto-Promote → skills experimentales exitosas → promovidas a estables
+4. Auto-Archive → skills con baja tasa de éxito → archivadas
+5. LearnedSkillsBridge → learned_skills.json → SKILL.md funcionales
+6. Aumformbring.auto_improve() → consolida duplicados, limpia memoria
+```
+
+### 🧠 Core Components
+
+| Component | File | What it does |
+|---|---|---|
+| **Aumformbring** | `tools/aumformbring.py` | Memoria conversacional con recall semántico TF-IDF, análisis de intención/herramientas/éxito, auto-mejora |
+| **ErrorLearningSystem** | `tools/error_learning.py` | Captura fallos, genera lecciones, detecta fallos en cascada, produce código de auto-healing |
+| **SkillForger** | `tools/skill_forger.py` | Analiza patrones de uso y forja nuevas skills automáticamente |
+| **AutoLearningOrchestrator** | `tools/auto_learning_orchestrator.py` | Orquestador del ciclo completo con quality gates |
+| **LearnedSkillsBridge** | `tools/learned_skills_bridge.py` | Convierte habilidades aprendidas en SKILL.md funcionales con validación de calidad |
+
+### 📥 Cómo Almacena Conversaciones
+
+Cada interacción con el agente se almacena automáticamente al finalizar. El sistema extrae metadatos estructurados de cada conversación:
+- **tools_used**: qué herramientas se invocaron
+- **success**: si la conversación fue exitosa
+- **intent**: la intención detectada (create/edit/search/delete/analyze/play/setup/general)
+- **tags**: etiquetas automáticas (blender, video, python, etc.)
+- **error_hint**: fragmento de error si falló
+
+### 🔍 Cómo Recupera Conocimiento
+
+Antes de cada llamada al LLM, el agente inyecta contexto relevante automáticamente:
+
+1. **Conversaciones similares**: usa recall semántico TF-IDF para encontrar las 3 conversaciones más parecidas a la solicitud actual
+2. **Patrones relevantes**: busca patrones de uso previos que coincidan con palabras clave
+3. **Lecciones de errores**: inyecta advertencias de herramientas que podrían fallar según el contexto
+
+Esto permite que el agente "recuerde" experiencias pasadas sin necesidad de fine-tuning.
+
+### 🛠️ Comandos de Memoria (CLI)
+
 ```bash
+# Buscar en la memoria conversacional
 python automix.py memory search "cliente juan"
+
+# Estadísticas del sistema AUMFORMBRING
 python automix.py memory stats
+
+# Listar habilidades aprendidas automáticamente
+python automix.py memory skills
+
+# Ver patrones de uso más frecuentes
+python automix.py memory patterns
+
+# Ver memoria reciente (últimas 20 conversaciones)
+python automix.py memory recent
+
+# Olvidar una conversación específica
+python automix.py memory forget <conversation_id>
+
+# Limpiar toda la memoria (¡cuidado!)
+python automix.py memory clear
+```
+
+### 🚑 Sistema de Auto-Healing
+
+Cuando una herramienta falla, ErrorLearningSystem registra el error y genera automáticamente **código de reparación ejecutable**:
+
+```
+Error: ModuleNotFoundError: No module named 'fpdf2'
+  → Código de healing: pip install fpdf2 (auto-ejecutado)
+
+Error: FileNotFoundError: no such file 'reporte.pdf'
+  → Código de healing: os.makedirs("directorio", exist_ok=True) (auto-ejecutado)
+
+Error: PermissionError en C:\Windows
+  → Código de healing: redirigir a Downloads (auto-aplicado)
+```
+
+El agente ejecuta el healing automáticamente y reintenta la herramienta. Si funciona, el error se registra como "curado". Si no, la lección se refuerza.
+
+### 🔗 Detección de Fallos en Cascada
+
+Cuando 3+ herramientas fallan en menos de 60 segundos, el sistema detecta el patrón de **cascada** y lo registra para análisis:
+
+```json
+{
+  "key": "list_directory->read_file->write_file",
+  "tools": ["list_directory", "read_file", "write_file"],
+  "occurrences": 3,
+  "first_seen": "2026-06-08T10:00:00",
+  "last_seen": "2026-06-08T11:30:00"
+}
+```
+
+Esto permite identificar workflows completos que fallan sistemáticamente.
+
+### 🔄 Ciclo de Auto-Evolución (Full Cycle)
+
+Cada 5 conversaciones, el orquestador ejecuta el pipeline completo:
+
+```python
+# También puedes ejecutarlo manualmente:
+from tools.auto_learning_orchestrator import AutoLearningOrchestrator
+report = AutoLearningOrchestrator.run_full_cycle()
+print(f"Forjadas: {report['skills_forged']}")
+print(f"Promovidas: {report['skills_promoted']}")
+print(f"Archivadas: {report['skills_archived']}")
+```
+
+El reporte incluye:
+- `skills_forged`: nuevas skills creadas automáticamente
+- `skills_promoted`: skills experimentales → estado "stable"
+- `skills_archived`: skills con baja tasa de éxito → archivadas
+- `learned_skills_synced`: skills sincronizadas a `skills/auto-*/SKILL.md`
+- `quality_gates`: estadísticas acumuladas de todos los ciclos ejecutados
+
+### 📊 Quality Gates
+
+Cada skill forjada pasa por filtros de calidad antes de ser aceptada:
+- **Usage ≥ 2**: la skill debe haber sido usada al menos 2 veces
+- **Response ≥ 30 chars**: la respuesta debe tener contenido significativo
+- **Name ≥ 5 chars**: el nombre debe ser descriptivo
+- **Validation check**: la skill debe pasar validación interna de SkillForger
+
+### 📁 Datos Persistentes
+
+| Archivo | Ruta | Contenido |
+|---|---|---|
+| `conversation_memory.json` | `aumformbring_data/` | Últimas 500 conversaciones con metadatos |
+| `learned_patterns.json` | `aumformbring_data/` | Hasta 100 patrones de uso ordenados por frecuencia |
+| `learned_skills.json` | `aumformbring_data/` | Skills aprendidas con tasa de éxito |
+| `auto_improvements.json` | `aumformbring_data/` | Historial de auto-mejoras |
+| `error_log.json` | `nexus_data/` | Últimos 2000 errores registrados |
+| `lessons_learned.json` | `nexus_data/` | Lecciones generadas automáticamente |
+| `cascade_failures.json` | `nexus_data/` | Fallos en cascada detectados |
+| `SKILL.md` auto-generados | `skills/auto-*/` | Skills funcionales para el agente |
+
+### 💡 Ejemplo de Ciclo Completo
+
+```
+Usuario: "crea un video en 3D de una isla"
+  → El agente ejecuta herramientas, falla en permiso de escritura
+  → ErrorLearningSystem registra: PermissionError en write_file
+  → Crea lección: "usa Downloads en vez de System32"
+  → Después de 2 ocurrencias más, lección consolidada
+
+5 conversaciones después → Auto-learning cycle:
+  → ErrorLearningSystem.analyze → candidato para "write_file permissions"
+  → SkillForger detecta patrón → forja "auto-manejo-rutas"
+  → Quality gate pasa (usage≥2)
+  → LearnedSkillsBridge → skills/auto-manejo-rutas/SKILL.md
+
+Próxima vez que alguien pida crear archivos:
+  → Context injection trae la lección y la skill
+  → El agente usa Downloads automáticamente
+  → Sin errores. Evolución completa.
 ```
 
 ---
