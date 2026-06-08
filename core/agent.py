@@ -904,7 +904,8 @@ class AutomyxAgent:
         return resolved
 
     def run(self, user_input: str, custom_system_prompt: str = None, agent_skills: dict = None,
-            agent_id: str = "main", progress_callback=None, images: list = None) -> str:
+            agent_id: str = "main", progress_callback=None, images: list = None,
+            cancel_check: Optional[Callable[[], bool]] = None) -> str:
         """Bucle principal del agente con fases claras y comunicación rica.
 
         `images` (opcional): lista de dicts {"data": base64, "mime": "image/png"}.
@@ -1163,6 +1164,13 @@ class AutomyxAgent:
         for iteration in range(max_iterations):
             agent_status["step"] = iteration + 1
 
+            # Verificar cancelación (multi-tarea)
+            if cancel_check and cancel_check():
+                if TERMINAL_AVAILABLE and term:
+                    term.warn("Tarea cancelada por el usuario")
+                final_answer = "⏹️ Tarea cancelada."
+                break
+
             # Truncar historial para no explotar
             if len(self.history) > 21:
                 self.history = [self.history[0]] + self.history[-20:]
@@ -1354,6 +1362,13 @@ class AutomyxAgent:
                     if rationale:
                         try: term.info(f"Razon: {rationale}")
                         except Exception: pass
+
+                # Verificar cancelación antes de ejecutar tool
+                if cancel_check and cancel_check():
+                    if TERMINAL_AVAILABLE and term:
+                        term.warn("Tarea cancelada durante ejecución de herramientas")
+                    all_results_msg += "\n⏹️ Tarea cancelada."
+                    break
 
                 # 4.4: Ejecutar la tool con medición de tiempo y auto-healing
                 t0 = time.time()

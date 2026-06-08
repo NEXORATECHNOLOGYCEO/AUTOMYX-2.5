@@ -1695,10 +1695,9 @@ async def chat_endpoint(req: ChatRequest, request: Request, _: bool = Depends(ve
     if req.model and req.model != agent.model_name:
         agent.update_model(req.model)
         
-    # Lógica antigua para compatibilidad si no se solicita streaming en el request
-    # Para simplificar y no romper el cliente, mantenemos la interfaz REST estándar 
-    # pero el LLM por debajo ya está usando streaming real-time hacia la consola
-    response = agent.run(req.message, custom_system_prompt=custom_prompt, agent_skills=agent_skills)
+    # Ejecutar en thread separado para no bloquear el event loop
+    loop = asyncio.get_event_loop()
+    response = await loop.run_in_executor(None, agent.run, req.message, custom_prompt, agent_skills)
 
     # AUMFORMBRING: Almacenar la conversación automáticamente para aprendizaje
     aumformbring_system.store_conversation(

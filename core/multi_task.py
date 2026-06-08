@@ -281,6 +281,7 @@ class MultiTaskDispatcher:
                 custom_system_prompt=task.custom_prompt,
                 agent_id=task.agent_id,
                 progress_callback=progress_callback,
+                cancel_check=lambda: task.cancelled,
             )
             task.result = result or ""
             task.status = TaskStatus.COMPLETED
