@@ -1093,14 +1093,24 @@ class AutomyxAgent:
 
         self.history.append({"role": "user", "content": user_input})
 
-        # Inyectar lecciones aprendidas de errores previos (no alucinar)
+        # Inyectar contexto de auto-aprendizaje (conversaciones similares + lecciones)
+        context_parts = []
+        if aumformbring_system is not None:
+            try:
+                ctx = aumformbring_system.inject_context(user_input)
+                if ctx:
+                    context_parts.append(ctx)
+            except Exception:
+                pass
         if ErrorLearningSystem is not None:
             try:
                 warnings = ErrorLearningSystem.get_warnings_for_request(user_input)
                 if warnings:
-                    self.history.append({"role": "system", "content": warnings})
+                    context_parts.append(warnings)
             except Exception:
                 pass
+        if context_parts:
+            self.history.append({"role": "system", "content": "\n".join(context_parts)})
 
         # Plan autogenerado (model-native) solo para tareas MULTI-PASO claras
         _needs_plan = any(kw in user_input.lower() for kw in
@@ -1185,6 +1195,10 @@ class AutomyxAgent:
                     if hasattr(delta, "reasoning_content") and delta.reasoning_content:
                         reasoning_accumulated += delta.reasoning_content
                         agent_status["reasoning"] = reasoning_accumulated
+                        # Mostrar razonamiento en vivo si el terminal lo soporta
+                        if TERMINAL_AVAILABLE and term and hasattr(term, 'live_reasoning'):
+                            try: term.live_reasoning(reasoning_accumulated)
+                            except Exception: pass
                     if getattr(delta, "content", None) is not None:
                         ai_message += delta.content
                 if TERMINAL_AVAILABLE and term:
@@ -1321,17 +1335,26 @@ class AutomyxAgent:
                 if len(recent_actions) > 15:
                     recent_actions.pop(0)
 
-                # 4.3: Comunicar QUÃ‰ voy a hacer
+                # 4.3: Comunicar QUÃ‰ voy a hacer y por quÃ©
                 args_summary = _truncate_args(args)
+                rationale = tool_call.get("rationale", "")
+                narrative = f"[{idx}/{len(tool_calls)}] "
+                if rationale:
+                    narrative += f"{rationale} -> {action}({args_summary})"
+                else:
+                    narrative += f"Ejecutando {action}({args_summary})"
                 agent_status["tool_name"] = action
                 agent_status["tool_args_summary"] = args_summary
-                _set_phase("tool_executing",
-                          f"[{idx}/{len(tool_calls)}] Ejecutando {action}({args_summary})",
+                agent_status["reasoning"] = rationale
+                _set_phase("tool_executing", narrative,
                           tool_name=action, tool_args_summary=args_summary)
                 if TERMINAL_AVAILABLE and term:
                     term.tool_executing(action, args)
+                    if rationale:
+                        try: term.info(f"Razon: {rationale}")
+                        except Exception: pass
 
-                # 4.4: Ejecutar la tool con medición de tiempo
+                # 4.4: Ejecutar la tool con medición de tiempo y auto-healing
                 t0 = time.time()
                 tool_result: Any = None
                 tool_exc: Optional[BaseException] = None
@@ -1369,6 +1392,31 @@ class AutomyxAgent:
                         tool_exc = e
                 except Exception as e:
                     tool_exc = e
+
+                # AUTO-HEALING: si la tool falló, intentar con código de healing
+                if tool_exc is not None and ErrorLearningSystem is not None:
+                    try:
+                        healing_code = ErrorLearningSystem.get_healing_suggestions(str(tool_exc))
+                        if healing_code and "Auto-healing" in healing_code:
+                            _set_phase("healing", f"Auto-reparando: {str(tool_exc)[:60]}",
+                                      error_message=str(tool_exc))
+                            if TERMINAL_AVAILABLE and term:
+                                term.info(f"Auto-healing para {action}...")
+                            # Intentar ejecutar healing code
+                            try:
+                                exec(healing_code.replace("[RUTA_AQUI]", 
+                                    next((v for v in args.values() if isinstance(v, str) and 
+                                          ("\\" in v or "/" in v)), ".")))
+                                # Retry the tool once
+                                tool_result = self.tools[action](**args)
+                                tool_exc = None  # healed
+                                if TERMINAL_AVAILABLE and term:
+                                    term.success(f"Auto-healing exitoso para {action}")
+                            except Exception:
+                                pass  # healing didn't work, keep original error
+                    except Exception:
+                        pass
+
                 duration_ms = int((time.time() - t0) * 1000)
                 if progress_callback:
                     try: progress_callback("tool_executed", f"{action} listo en {duration_ms}ms", step=iteration+1, tool_name=action)
@@ -1453,13 +1501,31 @@ class AutomyxAgent:
             except Exception:
                 pass
 
-        # Periodic auto-learning cycle
-        self._conversation_count += 1
-        cycle_interval = 5
-        if AutoLearningOrchestrator is not None and self._conversation_count % cycle_interval == 0:
+        # Track skill usage from tools used in this conversation
+        if aumformbring_system is not None and final_answer:
             try:
-                AutoLearningOrchestrator.run_full_cycle()
+                tools_used = re.findall(r'(?:action|tool)["\']?\s*:\s*["\'](\w+)["\']', final_answer)
+                for t in tools_used[:5]:
+                    aumformbring_system.track_skill_usage(t, success=True)
             except Exception:
                 pass
 
+        # Periodic auto-learning cycle with status feedback
+        self._conversation_count += 1
+        cycle_interval = 5
+        if AutoLearningOrchestrator is not None and self._conversation_count % cycle_interval == 0:
+            _set_phase("learning", "Ejecutando ciclo de auto-aprendizaje...")
+            if TERMINAL_AVAILABLE and term:
+                try: term.info("Ciclo de auto-aprendizaje automatico en progreso...")
+                except Exception: pass
+            try:
+                report = AutoLearningOrchestrator.run_full_cycle()
+                if report.get("skills_forged", 0) > 0 or report.get("skills_promoted", 0) > 0:
+                    if TERMINAL_AVAILABLE and term:
+                        try: term.success(f"Auto-evolución: {report['skills_forged']} forjadas, {report['skills_promoted']} promovidas")
+                        except Exception: pass
+            except Exception:
+                pass
+
+        _set_phase("idle", "Listo. Esperando tu siguiente solicitud.")
         return final_answer
