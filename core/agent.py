@@ -324,7 +324,7 @@ class ModelProvider:
 
 
 class AutomyxAgent:
-    def __init__(self, model_name: str = "nvidia/gpt-oss-120b", provider: str = None):
+    def __init__(self, model_name: str = "openai/gpt-oss-120b", provider: str = None):
         self.model_name = model_name
         self.provider = provider or ModelProvider.get_provider(model_name)
         self.hw = hw_config
@@ -1204,14 +1204,15 @@ class AutomyxAgent:
                 if TERMINAL_AVAILABLE and term:
                     term.llm_response_done()
             except Exception as api_err:
-                # Fallback: modelo seguro
-                _set_phase("error", f"Error con {self.model_name}, usando fallback...")
+                # Fallback: reintentar con modelo seguro
+                _set_phase("error", f"Error con {self.model_name}, reintentando...")
                 if TERMINAL_AVAILABLE and term:
-                    term.warn(f"Error con modelo principal: {api_err}. Probando fallback.")
+                    term.warn(f"Error con modelo principal: {api_err}. Reintentando con fallback.")
                 api_error = str(api_err)
+                _fallback_model = "openai/gpt-oss-120b"
                 try:
                     completion = self.client.chat.completions.create(
-                        model="openai/gpt-oss-120b",
+                        model=_fallback_model,
                         messages=self.history,
                         temperature=0.1,
                         max_tokens=4096,
@@ -1219,7 +1220,7 @@ class AutomyxAgent:
                     )
                     ai_message = completion.choices[0].message.content
                 except Exception as e2:
-                    msg = f"Error conectando con OpenAI (Nvidia): {e2}"
+                    msg = f"Error en fallback ({_fallback_model}): {e2}"
                     _set_phase("error", msg, error_message=msg)
                     if TERMINAL_AVAILABLE and term:
                         term.error(msg)

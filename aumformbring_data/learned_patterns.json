@@ -576,5 +576,19 @@
     ],
     "timestamp": "2026-06-05T18:56:11.461440",
     "usage_count": 1
+  },
+  {
+    "id": "b153f9c77d80a37b",
+    "pattern": "que puedes hacer como asistente de finanzas [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMEDIATAMENTE como un ",
+    "tools_used": [],
+    "intent": "play",
+    "success": true,
+    "response_example": "¡Hola! Soy Automyx, tu agente de IA. ¿En qué te ayudo?",
+    "tags": [
+      "voz"
+    ],
+    "timestamp": "2026-06-08T13:24:49.321942",
+    "last_seen": "2026-06-08T13:24:49.321942",
+    "usage_count": 1
   }
 ]

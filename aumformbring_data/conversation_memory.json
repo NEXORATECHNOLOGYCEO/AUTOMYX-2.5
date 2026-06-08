@@ -1948,5 +1948,23 @@
       "video",
       "carpeta"
     ]
+  },
+  {
+    "id": "6dfcad7912736bf8",
+    "timestamp": "2026-06-08T13:24:49.321942",
+    "user_input": "que puedes hacer como asistente de finanzas [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMEDIATAMENTE como un humano en la vida real. Máximo 10 a 15 palabras. Ve directo al grano, sin saludos formales, usa un tono súper conversacional y casual. NADA de markdown.",
+    "agent_response": "¡Hola! Soy Automyx, tu agente de IA. ¿En qué te ayudo?",
+    "metadata": {
+      "voice_enabled": true,
+      "agent_id": "agent_1780943057",
+      "model": "minimaxai/minimax-m2.7"
+    },
+    "tools_used": [],
+    "success": true,
+    "error_hint": "",
+    "intent": "play",
+    "tags": [
+      "voz"
+    ]
   }
 ]

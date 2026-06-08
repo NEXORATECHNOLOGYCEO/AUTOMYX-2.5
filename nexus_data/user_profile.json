@@ -1,6 +1,6 @@
 {
   "created_at": "2026-06-04T18:35:00.212747",
-  "interaction_count": 117,
+  "interaction_count": 118,
   "preferences": {
     "tone": "professional",
     "detail_level": "medium",
@@ -15,6 +15,11 @@
     "3d_modeling": 26
   },
   "recent_interactions": [
+    {
+      "timestamp": "2026-06-08T13:24:49.340163",
+      "input": "que puedes hacer como asistente de finanzas [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de vo",
+      "tools": []
+    },
     {
       "timestamp": "2026-06-08T11:51:35.300540",
       "input": "edita mi ultimo video llamado fabricio. esta en la carpeta de descargas, ponle subtitulos automatico",
@@ -258,11 +263,6 @@
     {
       "timestamp": "2026-06-05T20:09:59.337127",
       "input": "pero abre esa carpeta en visual studio code, y ejecuta el servidor porfa [INSTRUCCIÓN INTERNA URGENT",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T20:06:57.302251",
-      "input": "ok [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMEDIATAMENTE",
       "tools": []
     }
   ]
