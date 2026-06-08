@@ -24,6 +24,16 @@
     "usage_count": 3
   },
   {
+    "id": "eaed45361a170f4e",
+    "pattern": "mano [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMEDIATAMEN",
+    "response_example": "Claro, dime qué necesitas y lo hacemos al instante ahora.",
+    "tags": [
+      "voz"
+    ],
+    "timestamp": "2026-06-04T23:52:01.986676",
+    "usage_count": 3
+  },
+  {
     "id": "e5164156be8195dc",
     "pattern": "creame un pdf en mis archivos del ordenador, hablando sobre automyx tipo creando una licencia mit, p",
     "response_example": "PDF con licencia MIT creado en C:\\Users\\COMPUMAX\\Documents\\AutomyxMITLicense.pdf.",
@@ -43,16 +53,6 @@
       "video"
     ],
     "timestamp": "2026-06-04T19:54:34.089739",
-    "usage_count": 2
-  },
-  {
-    "id": "eaed45361a170f4e",
-    "pattern": "mano [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMEDIATAMEN",
-    "response_example": "Claro, dime qué necesitas y lo hacemos al instante ahora.",
-    "tags": [
-      "voz"
-    ],
-    "timestamp": "2026-06-04T23:52:01.986676",
     "usage_count": 2
   },
   {

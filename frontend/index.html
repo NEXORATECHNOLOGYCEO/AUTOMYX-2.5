@@ -544,6 +544,154 @@
             margin-top: 1rem; letter-spacing: 0.15em;
             transform: translateZ(10px);
         }
+
+        /* ===================================================================
+           FLOATING MULTI-TASK BUTTON (FAB) — 3D glassmorphism
+           =================================================================== */
+        .mt-fab {
+            position: fixed; bottom: 100px; right: 24px; z-index: 100;
+            width: 56px; height: 56px; border-radius: 50%;
+            background: linear-gradient(135deg, #00AAFF, #1E5FBE);
+            border: 1px solid rgba(0, 240, 255, 0.4);
+            box-shadow: 0 4px 24px rgba(0, 170, 255, 0.5), 0 0 0 0 rgba(0, 170, 255, 0.4);
+            display: flex; align-items: center; justify-content: center;
+            color: #fff; font-size: 1.4rem; cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            animation: mt-fab-pulse 2s infinite;
+        }
+        .mt-fab:hover {
+            transform: scale(1.12); box-shadow: 0 6px 32px rgba(0, 170, 255, 0.7);
+        }
+        .mt-fab .badge {
+            position: absolute; top: -4px; right: -4px;
+            min-width: 20px; height: 20px; border-radius: 10px;
+            background: #ff003c; color: #fff;
+            font-size: 0.65rem; font-weight: 700;
+            display: flex; align-items: center; justify-content: center;
+            padding: 0 4px; box-shadow: 0 0 12px rgba(255, 0, 60, 0.6);
+        }
+        @keyframes mt-fab-pulse {
+            0%, 100% { box-shadow: 0 4px 24px rgba(0, 170, 255, 0.5), 0 0 0 0 rgba(0, 170, 255, 0.3); }
+            50% { box-shadow: 0 4px 32px rgba(0, 170, 255, 0.7), 0 0 0 12px rgba(0, 170, 255, 0); }
+        }
+
+        /* Multi-Task Modal Overlay — 3D Flow Schema */
+        #mt-modal-overlay {
+            position: fixed; inset: 0; z-index: 200;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            display: none; align-items: center; justify-content: center;
+            perspective: 1200px;
+        }
+        #mt-modal-overlay.active { display: flex; }
+        #mt-modal {
+            width: min(92vw, 900px); max-height: 85vh;
+            background: linear-gradient(135deg, rgba(10, 20, 40, 0.95), rgba(5, 7, 12, 0.98));
+            border: 1px solid rgba(0, 240, 255, 0.25);
+            border-radius: 20px; padding: 1.5rem 1.5rem 1rem;
+            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.8), 0 0 60px rgba(0, 170, 255, 0.1);
+            transform: rotateX(2deg) rotateY(-2deg);
+            animation: mt-modal-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+        @keyframes mt-modal-enter {
+            0% { opacity: 0; transform: rotateX(10deg) rotateY(-5deg) translateZ(-200px) scale(0.9); }
+            100% { opacity: 1; transform: rotateX(0deg) rotateY(0deg) translateZ(0) scale(1); }
+        }
+        #mt-modal-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 0.75rem; flex-shrink: 0;
+        }
+        #mt-modal-header h2 {
+            font-family: 'Rajdhani', sans-serif; font-size: 1.5rem;
+            color: #E6F2FF; letter-spacing: 0.08em;
+        }
+        #mt-modal-header h2 i { color: #00f0ff; margin-right: 0.5rem; }
+        #mt-modal-close {
+            width: 36px; height: 36px; border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.1);
+            background: rgba(255,255,255,0.05);
+            color: #8b949e; cursor: pointer; display: flex;
+            align-items: center; justify-content: center;
+            transition: all 0.2s;
+        }
+        #mt-modal-close:hover { background: rgba(255,0,60,0.15); color: #ff003c; border-color: #ff003c; }
+
+        /* 3D Flow Schema Canvas */
+        #mt-flow-canvas {
+            flex: 1; min-height: 300px;
+            background: radial-gradient(ellipse at 30% 40%, rgba(0, 170, 255, 0.05), transparent 60%);
+            border: 1px solid rgba(0, 240, 255, 0.08);
+            border-radius: 12px; position: relative; overflow: hidden;
+            margin-bottom: 0.75rem;
+        }
+        .mt-flow-node {
+            position: absolute; display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            padding: 0.5rem 0.75rem; border-radius: 12px;
+            background: linear-gradient(135deg, rgba(15, 25, 45, 0.9), rgba(5, 10, 20, 0.95));
+            border: 1px solid rgba(0, 170, 255, 0.2);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+            font-size: 0.7rem; color: #e2e8f0; min-width: 100px;
+            transition: all 0.3s; cursor: pointer;
+            transform-style: preserve-3d;
+        }
+        .mt-flow-node:hover {
+            transform: translateZ(20px) scale(1.05);
+            box-shadow: 0 8px 32px rgba(0, 170, 255, 0.3);
+            border-color: rgba(0, 240, 255, 0.5);
+        }
+        .mt-flow-node .node-icon { font-size: 1.4rem; margin-bottom: 0.2rem; }
+        .mt-flow-node .node-label { font-weight: 600; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+        .mt-flow-node .node-status { font-size: 0.6rem; margin-top: 0.2rem; font-family: 'Rajdhani', sans-serif; }
+        .mt-flow-node.status-pending { border-color: rgba(156, 163, 175, 0.3); opacity: 0.6; }
+        .mt-flow-node.status-running { border-color: rgba(0, 240, 255, 0.6); box-shadow: 0 0 20px rgba(0, 240, 255, 0.2); }
+        .mt-flow-node.status-completed { border-color: rgba(52, 211, 153, 0.5); }
+        .mt-flow-node.status-failed { border-color: rgba(255, 0, 60, 0.5); box-shadow: 0 0 20px rgba(255, 0, 60, 0.15); }
+
+        /* Flow connectors (SVG) */
+        #mt-flow-svg {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+        }
+        #mt-flow-svg line {
+            stroke: rgba(0, 170, 255, 0.2);
+            stroke-width: 2;
+            stroke-dasharray: 6 4;
+            animation: flow-dash 1s linear infinite;
+        }
+        #mt-flow-svg line.completed { stroke: rgba(52, 211, 153, 0.4); stroke-dasharray: none; }
+        #mt-flow-svg line.running { stroke: rgba(0, 240, 255, 0.6); stroke-dasharray: none; }
+        #mt-flow-svg line.failed { stroke: rgba(255, 0, 60, 0.4); stroke-dasharray: 2 2; }
+        @keyframes flow-dash {
+            0% { stroke-dashoffset: 0; }
+            100% { stroke-dashoffset: -20; }
+        }
+
+        #mt-modal-footer {
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 0.5rem; flex-shrink: 0; flex-wrap: wrap;
+        }
+        #mt-modal-footer .mt-input-group {
+            flex: 1; display: flex; gap: 0.5rem; min-width: 200px;
+        }
+        #mt-modal-footer input {
+            flex: 1; background: rgba(10, 12, 18, 0.8); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px; padding: 0.5rem 0.75rem; color: #fff;
+            font-size: 0.85rem; outline: none; transition: border-color 0.2s;
+        }
+        #mt-modal-footer input:focus { border-color: rgba(0, 240, 255, 0.4); }
+        #mt-modal-footer button {
+            background: linear-gradient(135deg, #00AAFF, #1E5FBE);
+            border: none; border-radius: 8px; padding: 0.5rem 1rem;
+            color: #fff; font-size: 0.75rem; font-weight: 600; cursor: pointer;
+            transition: all 0.2s; white-space: nowrap;
+        }
+        #mt-modal-footer button:hover { box-shadow: 0 0 20px rgba(0, 170, 255, 0.4); transform: translateY(-1px); }
+        #mt-modal-footer button.secondary {
+            background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+        }
+        #mt-modal-footer button.secondary:hover { background: rgba(255,255,255,0.1); }
     </style>
 </head>
 <body class="flex h-screen overflow-hidden">
@@ -821,6 +969,12 @@
                 <div id="chat-box" class="flex-1 overflow-y-auto pr-4 mb-4" style="min-height: 200px;">
                     <!-- El chat empieza vacío -->
                 </div>
+
+                <!-- Floating Multi-Task Button -->
+                <button class="mt-fab" onclick="toggleMTModal()" id="mt-fab" title="Multi-Tarea con 3D Flow-Schema">
+                    <i class="fas fa-layer-group"></i>
+                    <span class="badge hidden" id="mt-fab-badge">0</span>
+                </button>
 
                 <!-- Input Area (Fixed at bottom) -->
                 <div class="pt-4 pb-4 flex-shrink-0">
@@ -2464,6 +2618,7 @@ C:\Users\Automyx>
 
         // ===== MULTI-TASK (parallel dispatcher) =====
         let mtPollInterval = null;
+        let _lastMTCache = { tasks: [] };
         async function fetchMultitask() {
             try {
                 const [statsRes, listRes] = await Promise.all([
@@ -2472,6 +2627,7 @@ C:\Users\Automyx>
                 ]);
                 const stats = await statsRes.json();
                 const list = await listRes.json();
+                _lastMTCache = list;
                 document.getElementById('mt-stat-total').innerText = stats.total ?? 0;
                 document.getElementById('mt-stat-active').innerText = stats.active ?? 0;
                 document.getElementById('mt-stat-workers').innerText = stats.max_workers ?? 0;
@@ -2484,9 +2640,98 @@ C:\Users\Automyx>
                 } else {
                     badge.classList.add('hidden');
                 }
+                // Update FAB badge
+                const fabBadge = document.getElementById('mt-fab-badge');
+                if (fabBadge) {
+                    const active = stats.active ?? 0;
+                    if (active > 0) { fabBadge.innerText = active; fabBadge.classList.remove('hidden'); }
+                    else { fabBadge.classList.add('hidden'); }
+                }
                 renderMultitaskTable(list.tasks || []);
+                if (document.getElementById('mt-modal-overlay')?.classList.contains('active')) {
+                    renderMTFlow(list.tasks || []);
+                }
             } catch (e) {
                 console.error('multitask fetch error', e);
+            }
+        }
+
+        // ===== 3D FLOW-SCHEMA RENDERER for multi-task modal =====
+        const MT_FLOW_COLORS = {
+            pending: '#9ca3af', running: '#00f0ff', streaming: '#d946ef',
+            completed: '#34d399', failed: '#ff003c', cancelled: '#fbbf24'
+        };
+        const MT_FLOW_ICONS = {
+            pending: 'fa-circle', running: 'fa-spinner fa-spin', streaming: 'fa-wave-square',
+            completed: 'fa-check-circle', failed: 'fa-times-circle', cancelled: 'fa-ban'
+        };
+        function renderMTFlow(tasks) {
+            const canvas = document.getElementById('mt-flow-canvas');
+            const nodesEl = document.getElementById('mt-flow-nodes');
+            const svgEl = document.getElementById('mt-flow-svg');
+            const emptyEl = document.getElementById('mt-flow-empty');
+            if (!nodesEl) return;
+
+            if (!tasks || tasks.length === 0) {
+                nodesEl.innerHTML = '';
+                svgEl.innerHTML = '';
+                if (emptyEl) emptyEl.style.display = 'block';
+                return;
+            }
+            if (emptyEl) emptyEl.style.display = 'none';
+
+            const w = canvas.clientWidth || 800;
+            const h = canvas.clientHeight || 300;
+            const cols = Math.min(tasks.length, 4);
+            const rows = Math.ceil(tasks.length / cols);
+
+            const nodeW = 130, nodeH = 80;
+            const gapX = Math.max(60, (w - cols * nodeW) / (cols + 1));
+            const gapY = Math.max(40, (h - rows * nodeH) / (rows + 1));
+            const padX = gapX, padY = gapY;
+
+            let nodesHtml = '';
+            const positions = [];
+            tasks.forEach((t, i) => {
+                const col = i % cols;
+                const row = Math.floor(i / cols);
+                const x = padX + col * (nodeW + gapX);
+                const y = padY + row * (nodeH + gapY);
+                const st = t.status || 'pending';
+                const color = MT_FLOW_COLORS[st] || '#9ca3af';
+                const icon = MT_FLOW_ICONS[st] || 'fa-circle';
+                const isActive = st === 'running' || st === 'streaming';
+                const prog = Math.round((t.progress || 0) * 100);
+                positions.push({ x: x + nodeW / 2, y: y + nodeH / 2 });
+                nodesHtml += `<div class="mt-flow-node status-${st}" style="left:${x}px;top:${y}px;width:${nodeW}px;height:${nodeH}px;border-color:${color};${isActive ? `box-shadow:0 0 20px ${color}44;` : ''}" title="${t.task_id || ''} — ${t.current_phase || st}">
+                    <div class="node-icon"><i class="fas ${icon}" style="color:${color}"></i></div>
+                    <div class="node-label" style="color:${color}">${(t.current_action || t.status || '?').slice(0, 18)}</div>
+                    <div class="node-status">${st} · ${prog}%</div>
+                </div>`;
+            });
+            nodesEl.innerHTML = nodesHtml;
+
+            // SVG connectors between sequential tasks
+            let svgLines = '';
+            for (let i = 0; i < positions.length - 1; i++) {
+                const p1 = positions[i], p2 = positions[i + 1];
+                const st = tasks[i + 1]?.status || 'pending';
+                const cls = st === 'completed' ? 'completed' : (st === 'running' || st === 'streaming' ? 'running' : (st === 'failed' ? 'failed' : ''));
+                svgLines += `<line x1="${p1.x}" y1="${p1.y}" x2="${parseInt(p2.x)}" y2="${p2.y}" class="${cls}"/>`;
+            }
+            svgEl.innerHTML = svgLines;
+        }
+
+        // Toggle multi-task modal
+        function toggleMTModal() {
+            const overlay = document.getElementById('mt-modal-overlay');
+            if (!overlay) return;
+            const isOpen = overlay.classList.contains('active');
+            if (isOpen) {
+                overlay.classList.remove('active');
+            } else {
+                overlay.classList.add('active');
+                renderMTFlow(_lastMTCache.tasks || []);
             }
         }
 
@@ -4749,5 +4994,34 @@ C:\Users\Automyx>
             setTimeout(() => screen.remove(), 900);
         }
     </script>
+    <!-- ===================================================================
+         MULTI-TASK MODAL — 3D Flow-Schema Overlay
+         =================================================================== -->
+    <div id="mt-modal-overlay" onclick="if(event.target===this) toggleMTModal()">
+        <div id="mt-modal">
+            <div id="mt-modal-header">
+                <h2><i class="fas fa-layer-group"></i> Multi-Tarea · Flow-Schema 3D</h2>
+                <button id="mt-modal-close" onclick="toggleMTModal()"><i class="fas fa-times"></i></button>
+            </div>
+            <!-- 3D Flow Canvas -->
+            <div id="mt-flow-canvas">
+                <svg id="mt-flow-svg"></svg>
+                <div id="mt-flow-nodes" style="position:relative;width:100%;height:100%;"></div>
+                <div id="mt-flow-empty" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;color:#6b7280;">
+                    <i class="fas fa-cubes text-4xl mb-2"></i>
+                    <p style="font-size:0.9rem;font-weight:600;">Sin tareas activas</p>
+                    <p style="font-size:0.75rem;">Las tareas aparecerán aquí como nodos 3D conectados</p>
+                </div>
+            </div>
+            <div id="mt-modal-footer">
+                <div class="mt-input-group">
+                    <input id="mt-quick-input" type="text" placeholder="Nueva tarea rápida (ej: abre chrome y busca gatos)" onkeydown="if(event.key==='Enter' && this.value.trim()) { submitParallelTask(this.value.trim()); this.value=''; }">
+                    <button onclick="const inp=document.getElementById('mt-quick-input'); if(inp.value.trim()){submitParallelTask(inp.value.trim());inp.value='';}"><i class="fas fa-rocket mr-1"></i> Disparar</button>
+                </div>
+                <button class="secondary" onclick="toggleMTModal(); switchView('multitask')"><i class="fas fa-expand mr-1"></i> Vista completa</button>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>

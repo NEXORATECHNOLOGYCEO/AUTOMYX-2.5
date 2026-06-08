@@ -25,6 +25,8 @@ agent_status = {
     "error_message": "",
     "started_at": None,
     "last_update": None,
+    "plan": None,        # Plan nativo del modelo: {"steps": [...], "total": 0, "completed": 0}
+    "flow_phases": [],   # Fases del flow-schema visual
 }
 
 # Forzar codificación UTF-8 para evitar errores en Windows con emojis
@@ -45,10 +47,8 @@ try:
     from tools.error_learning import ErrorLearningSystem
 except Exception:
     ErrorLearningSystem = None
-try:
-    from tools.task_coordinator import TaskCoordinator
-except Exception:
-    TaskCoordinator = None
+# TaskCoordinator REMOVIDO: el modelo coordina nativamente
+TaskCoordinator = None
 
 # NÃºcleo nuevo: parser JSON blindado y terminal Rich
 try:
@@ -611,28 +611,22 @@ class AutomyxAgent:
         except Exception:
             understanding = None
 
-        # 2) Fallback al TaskCoordinator
-        if not intent_summary and TaskCoordinator is not None:
-            try:
-                tc_intent = TaskCoordinator.parse_intent(user_input)
-                if tc_intent.get("action"):
-                    verb = tc_intent.get("action", "procesar")
-                    target = tc_intent.get("target", "")
-                    folder = tc_intent.get("folder_hint", "")
-                    intent_summary = f"Interpretado como: {verb}"
-                    if target:
-                        intent_summary += f" '{target}'"
-                    if folder:
-                        intent_summary += f" en {folder}"
-            except Exception:
-                pass
+        # 2) Intent summary from understanding (no TaskCoordinator needed)
+        if not intent_summary and understanding:
+            verb = understanding.get("intent", "procesar").replace("_", " ")
+            entities = understanding.get("entities", {})
+            intent_summary = f"🎯 {verb.capitalize()}"
+            if entities.get("folders"):
+                intent_summary += f" en {entities['folders'][0]}"
+            if entities.get("apps"):
+                intent_summary += f" → {entities['apps'][0]}"
 
         if intent_summary:
             term.info(intent_summary)
 
-    # ---- PLAN EXECUTOR ----
+    # ---- PLAN EXECUTOR (MODEL-NATIVE) ----
     def _execute_plan(self, plan: dict, progress_callback=None) -> Optional[str]:
-        """Ejecuta un plan paso a paso con comunicación perfecta."""
+        """Ejecuta un plan generado por el modelo paso a paso."""
         if not plan or not plan.get("steps"):
             return None
 
@@ -852,6 +846,8 @@ class AutomyxAgent:
         agent_status["tool_args_summary"] = ""
         agent_status["tool_result_summary"] = ""
         agent_status["tool_result_ok"] = None
+        agent_status["plan"] = None
+        agent_status["flow_phases"] = []
         _set_phase("analyzing", f"Analizando tu solicitud: \"{user_input[:60]}{'...' if len(user_input) > 60 else ''}\"")
         if progress_callback:
             try: progress_callback("analyzing", f"Analizando: {user_input[:60]}")
@@ -914,20 +910,45 @@ class AutomyxAgent:
             except Exception:
                 pass
 
-        # Plan autogenerado para tareas complejas
-        if TaskCoordinator is not None:
+        # Plan autogenerado (model-native) para tareas complejas
+        # Siempre incentivar al modelo a generar planes para tareas multi-paso
+        _needs_plan = any(kw in user_input.lower() for kw in
+                          ["primer", "luego", "despuÃ©s", "finalmente", "y tambiÃ©n",
+                           "varios", "mÃºltiples", "organiza", "todo",
+                           "paso", "pasos", "secuencia", "crea", "haz",
+                           "necesito que", "quiero que"])
+        if _needs_plan:
+            plan_prompt = (
+                f"\n[GENERA PLAN ESTRUCTURADO - MULTI-STEP]\n"
+                f"La tarea '{user_input[:80]}...' requiere mÃºltiples pasos.\n"
+                f"Genera PRIMERO un plan JSON con este esquema:\n"
+                f'{{"plan_id": "ts_XXXX", "steps": ['
+                f'{{"n": 1, "tool": "tool_name", "args": {{...}}, "rationale": "por quÃ©"}}, '
+                f'{{"n": 2, "tool": "...", "args": {{...}}, "rationale": "..."}}'
+                f'], "verification": [{{"check": "output_file_exists", "path": "..."}}]'
+                f"}}\n"
+                f"LUEGO ejecuta cada paso en orden. Usa SOLO herramientas disponibles."
+            )
+            self.history.append({"role": "system", "content": plan_prompt})
+            if TERMINAL_AVAILABLE and term:
+                term.info("Generando plan nativo multi-paso...")
+        elif TaskCoordinator is not None:
             try:
                 intent = TaskCoordinator.parse_intent(user_input)
                 if intent.get("action") in ("reeditar", "editar", "convertir", "organizar", "buscar", "crear") and intent.get("folder_hint"):
-                    plan = TaskCoordinator.build_plan(user_input)
-                    plan_summary = TaskCoordinator.summarize_plan(plan)
-                    self.history.append({"role": "system", "content": f"[PLAN AUTOGENERADO - SÃGUELO]\n{plan_summary}\n\nUsa los archivos candidatos detectados. NO inventes rutas."})
+                    plan_prompt = (
+                        f"\n[GENERA PLAN JSON ESTRUCTURADO]\n"
+                        f"Tu tarea: {user_input}\n"
+                        f"Genera SOLO un JSON vÃ¡lido con este esquema:\n"
+                        f'{{"plan_id": "timestamp", "steps": ['
+                        f'{{"n": 1, "tool": "nombre_herramienta", "args": {{...}}, "rationale": "por quÃ©"}}, '
+                        f'{{"n": 2, "tool": "...", "args": {{...}}, "rationale": "..."}}'
+                        f']}}'
+                        f"\nUsa SOLO tools disponibles. Si necesitas crear carpeta + juego, usa create_directory + write_file."
+                    )
+                    self.history.append({"role": "system", "content": plan_prompt})
                     if TERMINAL_AVAILABLE and term:
-                        term.info("Plan estructurado generado. Lo voy a seguir paso a paso.")
-                    # EJECUTAR PLAN EXPLÍCITAMENTE paso a paso
-                    plan_result = self._execute_plan(plan, progress_callback)
-                    if plan_result:
-                        return plan_result
+                        term.info("Generando plan nativo del modelo...")
             except Exception:
                 pass
 
@@ -1012,6 +1033,44 @@ class AutomyxAgent:
                     term.success("Tarea completada, preparando respuesta final.")
                 final_answer = ai_message
                 break
+
+            # ---- FASE 3.5: PLAN NATIVO + FLOW-SCHEMA ----
+            # Si hay múltiples tool calls, extraerlas como plan y renderizar visualmente
+            if len(tool_calls) >= 2:
+                plan_steps = []
+                for idx, tc in enumerate(tool_calls, 1):
+                    plan_steps.append({
+                        "n": idx,
+                        "tool": tc.get("action", "?"),
+                        "args": tc.get("args", {}),
+                        "rationale": tc.get("rationale", tc.get("action", "")),
+                    })
+                # Guardar en agent_status para el frontend
+                agent_status["plan"] = {
+                    "steps": plan_steps,
+                    "total": len(plan_steps),
+                    "completed": 0,
+                }
+                # Renderizar flow-schema en terminal
+                if TERMINAL_AVAILABLE and term:
+                    flow_phases = [{"id": f"step_{s['n']}", "label": s["tool"], "icon": "⬤"}
+                                   for s in plan_steps]
+                    agent_status["flow_phases"] = flow_phases
+                    try:
+                        term.render_flow_schema(flow_phases, current_phase="step_1",
+                                                title=f"Plan de {len(plan_steps)} pasos")
+                        term.render_plan(plan_steps, title=f"Ejecución: {user_input[:50]}...")
+                    except Exception:
+                        pass
+                if progress_callback:
+                    try:
+                        progress_callback("plan_created", f"Plan de {len(plan_steps)} pasos generado",
+                                          plan=plan_steps)
+                    except Exception:
+                        pass
+            else:
+                agent_status["plan"] = None
+                agent_status["flow_phases"] = []
 
             # ---- FASE 4: EJECUTAR CADA TOOL CALL CON VALIDACIÓN Y COMUNICACIÓN ----
             _set_phase("tool_executing", f"Ejecutando {len(tool_calls)} herramienta(s)...")
@@ -1151,6 +1210,20 @@ class AutomyxAgent:
                         term.tool_result(action, ok=ok, summary=f"{summary} ({duration_ms}ms)")
 
                 all_results_msg += result_msg + "\n"
+
+                # Actualizar progreso del plan
+                if agent_status.get("plan"):
+                    agent_status["plan"]["completed"] = idx
+                    if agent_status["flow_phases"] and idx <= len(agent_status["flow_phases"]):
+                        current_flow_id = agent_status["flow_phases"][idx - 1]["id"]
+                        if TERMINAL_AVAILABLE and term and idx < len(tool_calls):
+                            try:
+                                next_id = agent_status["flow_phases"][idx]["id"] if idx < len(agent_status["flow_phases"]) else ""
+                                term.render_flow_schema(agent_status["flow_phases"],
+                                                        current_phase=next_id,
+                                                        title=f"Plan paso {idx+1}/{len(tool_calls)}")
+                            except Exception:
+                                pass
 
             # ---- FASE 5: FEEDBACK AL MODELO ----
             if loop_detected:

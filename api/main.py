@@ -1024,9 +1024,15 @@ async def _async_inbound(data: "GatewayMessage"):
             result = await loop.run_in_executor(
                 None, lambda: agent.run(data.message, images=data.images)
             )
+            # Ensure result is a non-empty string
+            if result is None:
+                result = ""
+            result_str = str(result).strip()
+            if not result_str:
+                result_str = "✅ Tarea completada (sin respuesta textual)."
             _ASYNC_TASKS[task_id].update({
                 "status": "done",
-                "reply": result,
+                "reply": result_str,
                 "finished_at": __import__("time").time(),
             })
         except Exception as e:

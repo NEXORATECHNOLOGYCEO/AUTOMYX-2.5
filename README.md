@@ -53,6 +53,8 @@ Unlike cloud-only agents, Automyx is a **local-first Gateway** that runs on hard
 - 🧠 **Intent Engine v2.5** — A 30+ intent classifier that understands slang, typos, and colloquial Spanish/English ("ahorita metele a youtube reproducción de bad bunny" → `play_video`).
 - ⚡ **Multi-Task Dispatcher** — Run 6 tasks in parallel from the dashboard or CLI. Submit dozens of requests, get results as they complete.
 - 🔤 **12,606 Colloquial Tool Aliases** — `guardar_archivo`, `write_file`, `haz_write_file`, `do_write_file` … all resolve to the same canonical tool.
+- 📚 **Notion Skill** — Native integration with the Notion API v1 (`ntn_…` token). Search, read, summarize, create, update pages and databases — use Notion as the structured memory layer.
+- 🎨 **Glassmorphism Onboarding** — 6-step wizard (welcome → LLM → channel → skills multi-select → integrations → confirm). Electric-blue palette, original design. Pick from 82 skills with checkboxes.
 - 🗂️ **86-Skill Marketplace** — Browse, search, and inspect every skill from the new **Catálogo** view in the web UI.
 - 🎬 **Professional Video Studio** — CapCut, FFmpeg, color grading, dynamic subtitles, transitions, Vyrex Studio integration.
 - 🖼️ **Photo Editor Pro** — Layer compositing, filters, batch processing, GIMP-style operations.

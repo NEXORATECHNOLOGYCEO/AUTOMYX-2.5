@@ -511,6 +511,30 @@ def onboarding_summary(rows: List[Dict[str, str]]) -> None:
 # ---------------------------------------------------------------------------
 # Tool execution renderer
 # ---------------------------------------------------------------------------
+def render_plan_summary(steps: list, total_estimated: int = 0) -> None:
+    """Renderiza un resumen profesional del plan completo."""
+    if not RICH_AVAILABLE or console is None:
+        return
+    from rich.panel import Panel
+    from rich.text import Text
+    content = Text()
+    content.append(f"\n  📋 Plan generado: {len(steps)} paso(s)", style=f"bold {BRAND_GREEN}")
+    if total_estimated:
+        content.append(f"  ⏱  Estimado: {total_estimated}s", style=BRAND_GRAY)
+    content.append("\n\n")
+    for i, s in enumerate(steps, 1):
+        tool = s.get("tool", "?")
+        rationale = s.get("rationale", "")
+        icon = "✅" if s.get("ok") else "⏳"
+        content.append(f"  {icon} ", style="bold")
+        content.append(f"Paso {i}: ", style=BRAND_CYAN)
+        content.append(f"{tool}", style=f"bold {BRAND_GREEN}")
+        if rationale:
+            content.append(f"  — {rationale}", style=BRAND_GRAY)
+        content.append("\n")
+    console.print(Panel(content, border_style=BRAND_CYAN, padding=(1, 2)))
+
+
 def tool_executing(name: str, args: Dict[str, Any]) -> None:
     """Mensaje 'ejecutando tool' estilizado."""
     if RICH_AVAILABLE and console:
@@ -623,6 +647,92 @@ class AutomixLogger:
 
 # Logger global
 log = AutomixLogger("automyx")
+
+
+# ---------------------------------------------------------------------------
+# Flow-Schema / Plan Profesional
+# ---------------------------------------------------------------------------
+def render_plan(plan_steps: list, title: str = "Plan de Ejecución", style: str = BRAND_CYAN) -> None:
+    """Renderiza un plan de ejecución profesional estilo flow-schema.
+    `plan_steps`: lista de dicts con 'tool', 'args', 'rationale', 'n'.
+    """
+    if not RICH_AVAILABLE or console is None or not plan_steps:
+        _print_fallback(f"\n=== {title} ===")
+        for s in plan_steps:
+            _print_fallback(f"  Step {s.get('n','?')}: {s.get('tool','?')} → {s.get('rationale','')}")
+        return
+    
+    from rich.table import Table
+    from rich.box import DOUBLE_EDGE
+    
+    t = Table(
+        title=f"[bold {BRAND_CYAN}]⚡ {title}[/]",
+        box=DOUBLE_EDGE,
+        border_style=BRAND_CYAN,
+        header_style=f"bold {BRAND_GREEN}",
+        show_lines=True,
+        padding=(0, 1),
+    )
+    t.add_column("#", style=BRAND_GRAY, justify="center", width=3)
+    t.add_column("Tool", style=f"bold {BRAND_CYAN}", no_wrap=True)
+    t.add_column("Args", style=BRAND_GRAY, max_width=40)
+    t.add_column("Rationale", style="white", max_width=50)
+    
+    for s in plan_steps:
+        n = str(s.get("n", "?"))
+        tool = s.get("tool", "?")
+        args_str = ", ".join(f"{k}={v}" for k, v in (s.get("args", {}) or {}).items())
+        if len(args_str) > 40:
+            args_str = args_str[:37] + "..."
+        rationale = s.get("rationale", "")[:48]
+        t.add_row(n, tool, args_str or "—", rationale)
+    
+    console.print(t)
+
+
+def render_flow_schema(phases: list, current_phase: str = "", title: str = "Flow-Schema") -> None:
+    """Renderiza un flow-schema tipo pipeline con fases activas/completadas.
+    `phases`: lista de dicts con 'id', 'label', 'icon' (opcional).
+    """
+    if not RICH_AVAILABLE or console is None or not phases:
+        return
+    
+    from rich.text import Text
+    from rich.align import Align
+    
+    # Build a visual pipeline: [phase1] → [phase2] → [phase3] ...
+    parts = []
+    for i, p in enumerate(phases):
+        pid = p.get("id", "")
+        label = p.get("label", pid)
+        icon = p.get("icon", "◆")
+        
+        if pid == current_phase:
+            style = f"bold reverse {BRAND_CYAN}"
+        elif _phase_is_completed(pid, phases, current_phase):
+            style = f"bold {BRAND_GREEN}"
+        else:
+            style = BRAND_GRAY
+        
+        parts.append(f"[{style}] {icon} {label} [/]")
+        if i < len(phases) - 1:
+            arrow_style = BRAND_CYAN if _phase_is_completed(pid, phases, current_phase) or pid == current_phase else BRAND_GRAY
+            parts.append(f"[{arrow_style}] → [/{arrow_style}]")
+    
+    pipeline = Text.from_markup("".join(parts))
+    console.print(Align.center(pipeline))
+
+
+def _phase_is_completed(pid: str, phases: list, current_phase: str) -> bool:
+    """Check if a phase is before the current phase (i.e. completed)."""
+    found_current = False
+    for p in phases:
+        if p.get("id") == current_phase:
+            found_current = True
+            break
+        if p.get("id") == pid:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 import uvicorn
 from colorama import Fore, Style
 
+from fastapi.middleware.cors import CORSMiddleware
 from core.config import config
 from core.banner import print_automyx_banner
 
@@ -111,6 +112,66 @@ class AutomyxGateway:
                     "auth_mode": config.get("gateway.auth.mode")
                 }
             }
+
+        @self.app.get("/api/agent/status")
+        async def agent_status():
+            """Estado en tiempo real del agente (para frontend)"""
+            from core.agent import agent_status
+            return agent_status
+
+        @self.app.get("/api/multitask/stats")
+        async def multitask_stats():
+            try:
+                from core.multi_task import get_dispatcher
+                d = get_dispatcher()
+                return d.stats()
+            except Exception:
+                return {"total": 0, "active": 0, "max_workers": 0, "by_status": {}}
+
+        @self.app.get("/api/multitask/list")
+        async def multitask_list():
+            try:
+                from core.multi_task import get_dispatcher
+                d = get_dispatcher()
+                return {"tasks": d.list_tasks()}
+            except Exception:
+                return {"tasks": []}
+
+        @self.app.post("/api/multitask/submit")
+        async def multitask_submit(data: dict):
+            try:
+                prompt = data.get("prompt", "")
+                agent_id = data.get("agent_id", "main")
+                if not prompt:
+                    return {"ok": False, "detail": "No prompt provided"}
+                from core.multi_task import get_dispatcher
+                d = get_dispatcher()
+                task = d.submit(prompt, agent_id=agent_id)
+                return {"ok": True, "task_id": task.task_id}
+            except Exception as e:
+                return {"ok": False, "detail": str(e)}
+
+        @self.app.delete("/api/multitask/task/{task_id}")
+        async def multitask_cancel(task_id: str):
+            try:
+                from core.multi_task import get_dispatcher
+                d = get_dispatcher()
+                d.cancel(task_id)
+                return {"ok": True, "task_id": task_id}
+            except Exception:
+                return {"ok": False}
+
+        @self.app.get("/api/skills/catalog")
+        async def skills_catalog():
+            try:
+                from core.intent_engine import SKILLS_CATALOG, count_skills, count_tools_in_catalog
+                return {
+                    "total_skills": count_skills(),
+                    "total_tools_in_catalog": count_tools_in_catalog(),
+                    "categories": SKILLS_CATALOG,
+                }
+            except Exception as e:
+                return {"error": str(e), "total_skills": 0, "total_tools_in_catalog": 0, "categories": {}}
         
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket, token: str = None):
@@ -303,5 +364,12 @@ class AutomyxGateway:
 def create_gateway_app(agent):
     """Crea una instancia de la app FastAPI con Gateway"""
     app = FastAPI(title="Automyx Gateway")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     gateway = AutomyxGateway(app, agent)
     return app, gateway

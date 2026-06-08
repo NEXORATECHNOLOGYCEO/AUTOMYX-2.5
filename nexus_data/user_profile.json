@@ -1,6 +1,6 @@
 {
   "created_at": "2026-06-04T18:35:00.212747",
-  "interaction_count": 82,
+  "interaction_count": 117,
   "preferences": {
     "tone": "professional",
     "detail_level": "medium",
@@ -9,12 +9,187 @@
   },
   "skills_used": {},
   "topics": {
-    "photo_editing": 20,
+    "photo_editing": 31,
     "coding": 14,
-    "git": 1,
-    "3d_modeling": 23
+    "git": 2,
+    "3d_modeling": 26
   },
   "recent_interactions": [
+    {
+      "timestamp": "2026-06-08T11:51:35.300540",
+      "input": "edita mi ultimo video llamado fabricio. esta en la carpeta de descargas, ponle subtitulos automatico",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-08T11:43:49.631033",
+      "input": "interesante [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMED",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-08T11:43:24.334837",
+      "input": "que podemos hacer [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-07T22:44:56.910522",
+      "input": "entra y creame una carpeta [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real.",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-07T22:43:22.638137",
+      "input": "que podemos hacer de letal? [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-07T22:43:07.129185",
+      "input": "que podemos hacer asi de letal? [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo ",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-07T22:42:52.427109",
+      "input": "ey compa [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMEDIAT",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T21:26:05.239517",
+      "input": "se te olvido conectar el css con el html porq solo se ven algunas partes con diseño otras no? [INSTR",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T21:24:42.259447",
+      "input": "crea otro diseño con css3 o bootstrap pero mas profesional con mas contenido [INSTRUCCIÓN INTERNA UR",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T21:23:30.748839",
+      "input": "en el video sale asi: Ver vídeo en YouTube\nError 153\nError de configuración del reproductor de vídeo",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T21:22:34.258852",
+      "input": "pero no pusiste la cancion de seya osea un video real [INSTRUCCIÓN INTERNA URGENTE: Estás en una lla",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T21:21:37.555596",
+      "input": "si y ponle secciones y muchas cosas, y un video de youtube descargalo, la cancion de seya se la añde",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T21:20:45.489045",
+      "input": "pero hazle un diseño profesional [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T21:19:57.563961",
+      "input": "genera una pagina web profeisonal sobre intleigencia artificla, pero crea una carpeta en mis archivo",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T21:18:54.461512",
+      "input": "ahora buscala en youtube y reproducela [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en ",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T21:18:22.999755",
+      "input": "se llama seya, no sain seya bobo [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T21:17:44.080739",
+      "input": "entra a mi tik tok del ordenador y busca la cancio de seya y reproduce la que mas te guste [INSTRUCC",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T21:16:56.272089",
+      "input": "entra a mi tik tok del ordenador y busca la cancio de seya y reproduce la que mas te guste [INSTRUCC",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T21:15:25.183824",
+      "input": "puedes crear un script malisioso de fishing? [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de v",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T21:10:14.520877",
+      "input": "cuentame q puedes hacer [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Re",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T20:51:16.896910",
+      "input": "osea ese pero digamos que lleve imagenes reales personajes reales, personas reales me entiendes osea",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T20:49:43.769035",
+      "input": "no pero esa no [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde IN",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T20:49:11.274708",
+      "input": "puedes entrar a tik tok y colocar la cancion de seya, a mi tik tok del ordenador y esger el video q ",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T19:39:00.869081",
+      "input": "edita C:\\Users\\COMPUMAX\\Downloads\\fabri.mp4 para TikTok, con subtítulos en verde centrados, color gr",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T19:22:37.282133",
+      "input": "podrias editar mi ultimo video en archivos en la carpeta de descargas, que dice, fabri, porfa, poner",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T19:17:45.951984",
+      "input": "podrias editar mi ultimo video en archivos en la carpeta de descargas, que dice, fabri, porfa, poner",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T19:11:05.402724",
+      "input": "podrias editar mi ultimo video en archivos en la carpeta de descargas, que dice, fabri, porfa, poner",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T17:38:20.721493",
+      "input": "ey amigo [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMEDIAT",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T16:51:04.490839",
+      "input": "digamos osea a ese contrato le falta contenido esta feo, solo tiene el titulo y ya porque, recuerda ",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T16:47:57.067447",
+      "input": "Puedes crearme un contrato profesional, en un PDF, dentro de esa carpeta introping?? En descargas la",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T15:35:35.249781",
+      "input": "en donde esta en q carpeta [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real.",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-06T15:34:38.235971",
+      "input": "edita el ultimo video que acabe de descargar en descargas, bien profesional, ponle subtitulos bonito",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T22:44:45.724250",
+      "input": "dame una lista de lo q puedes hace [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiem",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T22:43:36.945632",
+      "input": "de que eres capaz [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde",
+      "tools": []
+    },
+    {
+      "timestamp": "2026-06-05T22:42:25.656097",
+      "input": "mano [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMEDIATAMEN",
+      "tools": []
+    },
     {
       "timestamp": "2026-06-05T22:16:34.738375",
       "input": "que puedes hacer [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde ",
@@ -88,181 +263,6 @@
     {
       "timestamp": "2026-06-05T20:06:57.302251",
       "input": "ok [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMEDIATAMENTE",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T20:01:31.645097",
-      "input": "podrias entrar a mis archivos y en la carpeta de descargas, creame una carpeta llamada, cinetflix, y",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T19:33:11.209637",
-      "input": "podrias entrar a mis archivos y en la carpeta de descargas, creame una carpeta llamada, cinetflix, y",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T19:04:04.524175",
-      "input": "Crea un video 3D profesional en Blender de un niño nadando a una isla, y que aparezcan dos lobos [IN",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T18:59:56.671232",
-      "input": "no importa osea crealo en archivos [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiem",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T18:59:42.449691",
-      "input": "Crea un video 3D profesional en Blender de un niño nadando a una isla, y que aparezcan dos lobos [IN",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T18:59:32.036592",
-      "input": "okay pero hazlo [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde I",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T18:59:14.793720",
-      "input": "Crea un video 3D profesional en Blender de un niño nadando a una isla, y que aparezcan dos lobos [IN",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T18:56:11.473535",
-      "input": "Crea un video 3D profesional en Blender de un niño nadando a una isla, y que aparezcan dos lobos\" \"A",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T18:55:41.748844",
-      "input": "crealo [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMEDIATAM",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T18:55:27.092701",
-      "input": "\"Crea un video 3D profesional en Blender de un niño nadando a una isla, y que aparezcan dos lobos\" \"",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T13:54:23.213069",
-      "input": "aun se ve todo en blanco, no se ven los carros nada porq? [INSTRUCCIÓN INTERNA URGENTE: Estás en una",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T13:52:50.286152",
-      "input": "siii arboles si le añadiste y eso, pero digamos porque no se ve como la skin, añadele a todo color v",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T13:51:17.654995",
-      "input": "pero no has añadido el carro ni nada en ese? osea añadele todo lo que quiero pero de verdad [INSTRUC",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T13:49:52.962562",
-      "input": "pero añadele digamos brazos piernas, osea añadele de todo lo posible que se le pueda añadir porfa, a",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T13:48:05.519747",
-      "input": "creame un diseño 3D de un niño en una isla bien profesional en blender, y ponle textura color, en es",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T13:42:00.358295",
-      "input": "creame un video 3D osea en blender profesional, de una pelicula pequeña, como digamos un niño, llega",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T13:35:39.947330",
-      "input": "creame un video 3D osea en blender profesional, de una pelicula pequeña, como digamos un niño, llega",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T13:30:21.937354",
-      "input": "creame un video 3D osea en blender profesional, de una pelicula pequeña, como digamos un niño, llega",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T13:26:38.712268",
-      "input": "creame un video 3D osea en blender profesional, de una pelicula pequeña, como digamos un niño, llega",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T13:19:53.985892",
-      "input": "quiero es uno como en una isla en 3D pero no video basico algo avanzado",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T13:16:17.414461",
-      "input": "creame un video en 3D, osea creado en blender de cero de blender profesional, y guardalo en mis arch",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T13:12:54.948768",
-      "input": "creame un video en 3D de blender profesional, y guardalo en mis archivos en descargas, sobre digamos",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T13:05:39.789911",
-      "input": "puedes entrar a blender y crearme un diseño 3D profesional de una isla y puedes póner a spiderman, e",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T10:59:51.068983",
-      "input": "puedes entrar a mi tik tok del ordenador y colocar la cancion de let me slowly y reproducir el video",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T10:58:44.788886",
-      "input": "que puedes hacer? [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T10:55:23.890287",
-      "input": "hola [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de voz en tiempo real. Responde INMEDIATAMEN",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T10:43:51.010149",
-      "input": "que mas",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T10:43:45.434932",
-      "input": "hola",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T00:11:16.169417",
-      "input": "cuando lo intento abrir me dice: No podemos abrir este archivo\nHubo un problema. [INSTRUCCIÓN INTERN",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T00:09:32.071660",
-      "input": "entra mis archivos en la carpeta de descargas y crea un pdf, sobre que es automyx la ia de nexora te",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-05T00:05:37.624330",
-      "input": "creame un pdf en mis archivos del ordenador, hablando sobre automyx tipo creando una licencia mit, p",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-04T23:58:58.815681",
-      "input": "creame un pdf en mis archivos del ordenador, hablando sobre automyx tipo creando una licencia mit, p",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-04T23:57:00.945224",
-      "input": "crealo de nuevo pero profesional, añadele contenido y ponlo en la carpeta de descargas [INSTRUCCIÓN ",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-04T23:55:53.658440",
-      "input": "dice que huboi un problema al abrir el archivo [INSTRUCCIÓN INTERNA URGENTE: Estás en una llamada de",
-      "tools": []
-    },
-    {
-      "timestamp": "2026-06-04T23:53:54.275497",
-      "input": "creame un pdf en mis archivos del ordenador, hablando sobre automyx tipo creando una licencia mit, p",
       "tools": []
     }
   ]

@@ -291,6 +291,97 @@ def step3_pick_channel() -> str:
 
 
 # ============================================================================
+# Skill-to-Channel mapping: each skill recommends specific channels
+# ============================================================================
+SKILL_CHANNEL_MAP = {
+    "telegram-bot": ["telegram"],
+    "discord-bot": ["discord"],
+    "whatsapp-bot": ["whatsapp"],
+    "instagram-automation": ["instagram"],
+    "social-media-manager": ["telegram", "discord", "instagram", "twitter"],
+    "notion-integration": ["notion"],
+    "github-automation": ["github"],
+    "content-factory": ["telegram", "discord", "tiktok", "youtube"],
+    "email-manager": ["email"],
+    "slack-bot": ["slack"],
+    "youtube-automation": ["youtube"],
+    "tiktok-automation": ["tiktok"],
+    "twitter-automation": ["twitter"],
+    "twitch-bot": ["twitch"],
+    "obsidian-integration": ["obsidian"],
+    "pm-tools": ["pm_tools"],
+}
+
+
+def _get_recommended_channels(skills: list[str]) -> list[str]:
+    """Returns recommended channels based on selected skills."""
+    channels = set()
+    for skill_name in skills:
+        sname = skill_name.lower().replace(" ", "-")
+        for key, chs in SKILL_CHANNEL_MAP.items():
+            if key in sname or sname in key:
+                channels.update(chs)
+            # Also check partial match
+            for word in sname.split("-"):
+                if word in key or key in word:
+                    channels.update(chs)
+    return list(channels)
+
+
+def _step3_5_skill_channels(skills: list[str], current_channel: str) -> str:
+    """After skills are selected, recommend and let user pick a channel."""
+    recommended = _get_recommended_channels(skills)
+    if not recommended:
+        return current_channel
+
+    if not QUESTIONARY_AVAILABLE:
+        info(f"Canales recomendados para tus skills: {', '.join(recommended)}")
+        return current_channel
+
+    show_step_header(3, 6, "Vincula tus skills a un canal",
+                     "Skills y canales trabajan juntos. Elige el canal principal.")
+
+    choices = []
+    for ch in recommended:
+        ch_names = {
+            "telegram": "✈ Telegram Bot", "discord": "💬 Discord Bot",
+            "whatsapp": "🟢 WhatsApp", "instagram": "📷 Instagram",
+            "twitter": "𝕏 Twitter", "tiktok": "🎵 TikTok",
+            "youtube": "▶ YouTube", "notion": "📚 Notion",
+            "github": "🐙 GitHub", "email": "📧 Email",
+            "slack": "🔷 Slack", "obsidian": "📓 Obsidian",
+            "pm_tools": "🗂 PM Tools", "twitch": "🎮 Twitch",
+        }
+        label = ch_names.get(ch, f"🔌 {ch}")
+        default = "✔ " if ch == current_channel else "  "
+        choices.append(Choice(f"{default} {label}", ch))
+
+    if current_channel and current_channel not in recommended:
+        ch_names = {
+            "telegram": "✈ Telegram Bot", "discord": "💬 Discord Bot",
+            "whatsapp": "🟢 WhatsApp", "instagram": "📷 Instagram",
+            "twitter": "𝕏 Twitter", "tiktok": "🎵 TikTok",
+            "youtube": "▶ YouTube", "notion": "📚 Notion",
+            "github": "🐙 GitHub", "email": "📧 Email",
+            "slack": "🔷 Slack", "obsidian": "📓 Obsidian",
+            "pm_tools": "🗂 PM Tools", "twitch": "🎮 Twitch",
+            "skip": "⏭ Web Dashboard (sin canal externo)",
+        }
+        label = ch_names.get(current_channel, current_channel)
+        choices.append(Choice(f"✔ {label} (actual)", current_channel))
+
+    result = questionary.select(
+        "¿Qué canal usarás con tus skills?",
+        choices=choices,
+        style=automyx_style(),
+        use_indicator=True,
+        pointer="◆",
+    ).ask()
+
+    return result or current_channel
+
+
+# ============================================================================
 # STEP 4 — Multi-select skills
 # ============================================================================
 STARTER_KIT = {
@@ -465,6 +556,9 @@ def run_onboarding():
     # Step 4
     skills = step4_pick_skills()
     ok(f"{len(skills)} skill(s) selected.")
+
+    # Step 3.5 — Link skills to channels
+    channel = _step3_5_skill_channels(skills, channel)
 
     # Step 5
     integrations = step5_integrations()
