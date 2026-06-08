@@ -611,8 +611,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             cmd = [
                 ffmpeg_bin, "-y", "-i", input_path,
                 "-vf", f"ass={safe_ass}",
-                "-c:a", "copy",
-                "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+                "-c:a", "aac", "-b:a", "128k",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
                 "-movflags", "+faststart",
                 output_path,
             ]
@@ -709,9 +709,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             else: # out
                 zoom_expr = f"max({zoom_factor}-0.002,1)"
 
-            filter_complex = f"zoompan=z='{zoom_expr}':d=700:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+            # Obtener FPS del source para zoompan 1:1
+            try:
+                fps_probe = subprocess.run(
+                    ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                     "-show_entries", "stream=r_frame_rate",
+                     "-of", "default=noprint_wrappers=1:nokey=1", input_path],
+                    capture_output=True, text=True, timeout=10,
+                )
+                fps_raw = fps_probe.stdout.strip()
+                if "/" in fps_raw:
+                    n, d = fps_raw.split("/")
+                    fps_val = max(1, min(120, int(float(n) / max(float(d), 1))))
+                else:
+                    fps_val = max(1, min(120, int(float(fps_raw) or 30)))
+            except Exception:
+                fps_val = 30
 
-            cmd = ["ffmpeg", "-y", "-i", input_path, "-vf", filter_complex, "-c:a", "copy", output_path]
+            filter_complex = f"zoompan=z='{zoom_expr}':fps={fps_val}:d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080"
+
+            cmd = ["ffmpeg", "-y", "-i", input_path, "-vf", filter_complex, "-c:a", "aac", "-b:a", "128k", "-preset", "ultrafast", output_path]
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode == 0:
                 return f"✅ Zoom dinámico '{zoom_mode}' aplicado! Guardado en {output_path}"
@@ -899,7 +916,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 for eff in effects_list:
                     eff_l = eff.lower()
                     if eff_l in ("zoom", "dynamic_zoom", "kenburns"):
-                        zoomed = _next_tmp(f"_{eff_l}.mp4")
+                        zoomed = _next_tmp(f"_{eff_l}")
                         zm_res = VideoTools.add_dynamic_zoom(current, zoomed, zoom_mode="in", zoom_factor=1.4)
                         if zm_res.startswith("✅"):
                             current = zoomed
