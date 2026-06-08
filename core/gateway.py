@@ -423,14 +423,11 @@ class AutomyxGateway:
         host = host or config.get("gateway.host")
         port = port or config.get("gateway.port")
         
-        # Imprimir banner oficial de Automyx
-        print_automyx_banner(model_name=self.agent.model_name if hasattr(self.agent, 'model_name') else "nvidia/gpt-oss-120b")
+        # Imprimir info de conexion (banner ya se mostro en api/main.py)
+        print(f"\n  Panel : http://{host}:{port}")
+        print(f"  Token  : {config.get_gateway_token()}\n")
         
-        print(f"\n{Fore.CYAN}🌐 Panel de control: http://{host}:{port}/")
-        print(f"{Fore.CYAN}🔗 WebSocket: ws://{host}:{port}/ws")
-        print(f"{Fore.YELLOW}🔑 Token: {config.get_gateway_token()}{Style.RESET_ALL}\n")
-        
-        uvicorn.run(self.app, host=host, port=port, log_level="info")
+        uvicorn.run(self.app, host=host, port=port, log_level="warning")
 
 
 def create_gateway_app(agent):

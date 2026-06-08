@@ -6,6 +6,26 @@ Inspirado en OpenClaw
 - Health checks
 - Sistema de configuración profesional
 """
+
+# ─── Silent startup: suprimir logs ruidosos antes de cualquier import ───
+import os
+import sys
+import logging
+
+logging.root.handlers.clear()
+logging.root.setLevel(logging.WARNING)
+for _lib in ("numexpr", "urllib3", "httpx", "httpcore", "PIL", "matplotlib", "fsspec", "s3fs", "gcsfs", "adlfs", "whisper", "torch", "triton"):
+    logging.getLogger(_lib).setLevel(logging.WARNING)
+logging.getLogger("automyx").setLevel(logging.WARNING)
+logging.getLogger("Agent").setLevel(logging.WARNING)
+logging.getLogger("uvicorn").setLevel(logging.WARNING)
+
+os.environ.setdefault("NUMEXPR_MAX_THREADS", "16")
+
+# ─── Silent imports: redirect stdout para ocultar prints de init ───
+_silent_stdout = sys.stdout
+sys.stdout = open(os.devnull, "w", encoding="utf-8")
+
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, HTTPException, Header
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -224,9 +244,9 @@ agent = AutomyxAgent(model_name=DEFAULT_MODEL)
 try:
     from tools.mega_tools import expand_registry_aliases, count_aliases
     # Las tools se registran DESPUÉS, pero podemos contar los planeados
-    logger.info(f"[mega_tools] {count_aliases(max_per_seed=2)} aliases listos para expandir")
-except Exception as e:
-    logger.debug(f"mega_tools no disponible: {e}")
+    pass  # count_aliases silencioso
+except Exception:
+    pass
 
 # Registrar herramientas
 agent.register_tool("execute_cmd", PCTools.execute_cmd)
@@ -735,12 +755,10 @@ agent.register_tool("video_slideshow", VideoProTools.slideshow)
 # --- EXPANDIR ALIASES (2500+ tools) ---
 try:
     from tools.mega_tools import expand_registry_aliases
-    # AUTOMYX_MAX_ALIAS_PER_SEED controla cuántos prefijos aplicar por seed (default 3)
     max_per_seed = int(os.environ.get("AUTOMYX_MAX_ALIAS_PER_SEED", "3"))
-    n_aliases = expand_registry_aliases(agent, max_per_seed=max_per_seed)
-    print(f"[AUTOMYX] ✅ {n_aliases} aliases coloquiales generados ({max_per_seed} prefijos/seed). Total tools registradas: {len(agent.tools)}")
-except Exception as e:
-    print(f"[AUTOMYX] ⚠️ mega_tools no se aplicó: {e}")
+    expand_registry_aliases(agent, max_per_seed=max_per_seed)
+except Exception:
+    pass
 
 
 # --- CREAR APLICACIÓN FASTAPI CON GATEWAY ---
@@ -749,6 +767,28 @@ app, gateway = create_gateway_app(agent)
 # Servir archivos estáticos
 if os.path.exists("frontend/assets"):
     app.mount("/assets", StaticFiles(directory="frontend/assets"))
+
+# ─── Restaurar stdout para el banner ───
+sys.stdout.close()
+sys.stdout = _silent_stdout
+
+# ─── Banner profesional (ASCII-only para Windows) ───
+print(f"""
+{'='*60}
+  AAA   U U  TTTTT  OOO  M   M Y YY X   X
+ A   A  U U    T   O   O MM MM Y Y   X X
+ AAAAA  U U    T   O   O M M M  Y     X
+ A   A  U U    T   O   O M   M  Y    X X
+ A   A  UU U   T    OOO  M   M  Y   X   X
+{'='*60}
+  AUTOMYX 2.5
+  Model    : {os.environ.get('AUTOMYX_MODEL', 'nvidia/gpt-oss-120b').split('/')[-1]}
+  Gateway  : http://localhost:3500
+  Tools    : {len(agent.tools):,} registradas
+  Sistema  : {sys.platform}
+{'='*60}
+  >> Gateway iniciado exitosamente <<
+""")
 
 
 # --- INICIALIZAR BD ---
