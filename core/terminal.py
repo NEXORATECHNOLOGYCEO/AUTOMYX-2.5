@@ -735,6 +735,36 @@ def _phase_is_completed(pid: str, phases: list, current_phase: str) -> bool:
     return False
 
 
+def render_parallel_groups(groups: list, title: str = "Ejecucion Paralela") -> None:
+    """Renderiza grupos de pasos en paralelo con layout visual.
+    `groups`: lista de {"steps": [pasos], "parallel": bool}
+    """
+    if not RICH_AVAILABLE or console is None or not groups:
+        return
+    from rich.table import Table
+    from rich.box import ROUNDED
+
+    t = Table(
+        title=f"[bold {BRAND_MAGENTA}]⚡ {title}[/]",
+        box=ROUNDED,
+        border_style=BRAND_MAGENTA,
+        show_header=True,
+        header_style=f"bold {BRAND_CYAN}",
+    )
+    t.add_column("Grupo", style=BRAND_GRAY, width=8, justify="center")
+    t.add_column("Pasos", style="white")
+    t.add_column("Modo", style=BRAND_CYAN, width=10, justify="center")
+
+    for i, g in enumerate(groups):
+        g_steps = g.get("steps", [])
+        is_parallel = g.get("parallel", False)
+        mode = "⚡ PARALELO" if is_parallel else "→ SECUENCIAL"
+        step_labels = "  →  ".join(s.get("tool", "?") for s in g_steps)
+        t.add_row(f"#{i+1}", step_labels, mode)
+
+    console.print(t)
+
+
 # ---------------------------------------------------------------------------
 # Multi-tarea: panel de progreso
 # ---------------------------------------------------------------------------

@@ -2682,12 +2682,15 @@ C:\Users\Automyx>
 
             const w = canvas.clientWidth || 800;
             const h = canvas.clientHeight || 300;
-            const cols = Math.min(tasks.length, 4);
-            const rows = Math.ceil(tasks.length / cols);
 
-            const nodeW = 130, nodeH = 80;
-            const gapX = Math.max(60, (w - cols * nodeW) / (cols + 1));
-            const gapY = Math.max(40, (h - rows * nodeH) / (rows + 1));
+            // Agrupar tareas: mismo estado "running" = paralelo, mismo row
+            // Layout: paralelo = misma fila, secuencial = filas consecutivas
+            const nodeW = 130, nodeH = 70;
+            const maxCols = 4;
+            const cols = Math.min(tasks.length, maxCols);
+            const rows = Math.ceil(tasks.length / cols);
+            const gapX = Math.max(50, (w - cols * nodeW) / (cols + 1));
+            const gapY = Math.max(50, (h - rows * nodeH) / (rows + 1));
             const padX = gapX, padY = gapY;
 
             let nodesHtml = '';
@@ -2702,22 +2705,39 @@ C:\Users\Automyx>
                 const icon = MT_FLOW_ICONS[st] || 'fa-circle';
                 const isActive = st === 'running' || st === 'streaming';
                 const prog = Math.round((t.progress || 0) * 100);
-                positions.push({ x: x + nodeW / 2, y: y + nodeH / 2 });
-                nodesHtml += `<div class="mt-flow-node status-${st}" style="left:${x}px;top:${y}px;width:${nodeW}px;height:${nodeH}px;border-color:${color};${isActive ? `box-shadow:0 0 20px ${color}44;` : ''}" title="${t.task_id || ''} — ${t.current_phase || st}">
+                positions.push({ x: x + nodeW / 2, y: y + nodeH / 2, row: row, col: col });
+                nodesHtml += `<div class="mt-flow-node status-${st}" style="left:${x}px;top:${y}px;width:${nodeW}px;height:${nodeH}px;border-color:${color};${isActive ? `box-shadow:0 0 20px ${color}44;` : ''}" title="${t.task_id || ''} - ${t.current_phase || st}">
                     <div class="node-icon"><i class="fas ${icon}" style="color:${color}"></i></div>
-                    <div class="node-label" style="color:${color}">${(t.current_action || t.status || '?').slice(0, 18)}</div>
-                    <div class="node-status">${st} · ${prog}%</div>
+                    <div class="node-label" style="color:${color}">${(t.current_action || t.status || '?').slice(0, 16)}</div>
+                    <div class="node-status">${st} ${prog}%</div>
                 </div>`;
             });
             nodesEl.innerHTML = nodesHtml;
 
-            // SVG connectors between sequential tasks
+            // SVG connectors: secuencial entre filas, paralelo dentro de filas
             let svgLines = '';
-            for (let i = 0; i < positions.length - 1; i++) {
-                const p1 = positions[i], p2 = positions[i + 1];
-                const st = tasks[i + 1]?.status || 'pending';
-                const cls = st === 'completed' ? 'completed' : (st === 'running' || st === 'streaming' ? 'running' : (st === 'failed' ? 'failed' : ''));
-                svgLines += `<line x1="${p1.x}" y1="${p1.y}" x2="${parseInt(p2.x)}" y2="${p2.y}" class="${cls}"/>`;
+            for (let i = 0; i < positions.length; i++) {
+                const p = positions[i];
+                // Conexion hacia abajo: del ultimo de esta fila al primero de la siguiente
+                const nextRow = p.row + 1;
+                const nextInRow = positions.filter(p2 => p2.row === nextRow);
+                const sameRowNext = positions.filter(p2 => p2.row === p.row && p2.col > p.col);
+                if (sameRowNext.length > 0 && i + 1 < positions.length) {
+                    // Misma fila (paralelo) -> conectar con linea punteada horizontal
+                    const pnext = sameRowNext[0];
+                    const st = tasks[i + 1]?.status || 'pending';
+                    const cls = st === 'completed' ? 'completed' : (st === 'running' || st === 'streaming' ? 'running' : '');
+                    svgLines += `<line x1="${p.x}" y1="${p.y}" x2="${pnext.x - 5}" y2="${pnext.y}" class="${cls}" style="stroke-dasharray:4 4;opacity:0.5"/>`;
+                }
+                if (nextInRow.length > 0) {
+                    // Siguiente fila (secuencial) -> conectar con flecha hacia abajo
+                    const pnext = nextInRow[0];
+                    const st = tasks[positions.indexOf(pnext)]?.status || 'pending';
+                    const cls = st === 'completed' ? 'completed' : (st === 'running' || st === 'streaming' ? 'running' : '');
+                    svgLines += `<line x1="${p.x}" y1="${p.y + nodeH/2}" x2="${pnext.x}" y2="${pnext.y - nodeH/2}" class="${cls}" style="stroke-width:2"/>`;
+                    // Flecha
+                    svgLines += `<polygon points="${pnext.x-4},${pnext.y-nodeH/2-6} ${pnext.x+4},${pnext.y-nodeH/2-6} ${pnext.x},${pnext.y-nodeH/2}" fill="${cls ? '#34d399' : 'rgba(0,170,255,0.3)'}"/>`;
+                }
             }
             svgEl.innerHTML = svgLines;
         }

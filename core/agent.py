@@ -8,6 +8,7 @@ import requests
 import subprocess
 import os
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Estado global para el frontend - enriquecido con fases claras
 agent_status = {
@@ -673,80 +674,199 @@ class AutomyxAgent:
         if intent_summary:
             term.info(intent_summary)
 
-    # ---- PLAN EXECUTOR (MODEL-NATIVE) ----
-    def _execute_plan(self, plan: dict, progress_callback=None) -> Optional[str]:
-        """Ejecuta un plan generado por el modelo paso a paso."""
+    # Tools que NO se pueden paralelizar (efectos secundarios)
+    SERIAL_TOOLS: set = {
+        "write_file", "create_directory", "delete_file", "move_file",
+        "copy_file", "open_program", "use_terminal_window", "execute_cmd",
+        "open_website", "create_web_preview",
+        "ui_click_image", "mouse_click", "press_key", "type_text", "press_hotkey",
+        "send_whatsapp_message", "send_email",
+    }
+
+    # ---- PLAN EXECUTOR PARALELO (MODEL-NATIVE) ----
+    def _analyze_parallel_groups(self, steps: list) -> list:
+        """Analiza dependencias entre pasos y agrupa los independientes para paralelizar.
+        Retorna lista de grupos: [{"steps": [...], "parallel": True/False}]
+        Cada grupo con `parallel=True` ejecuta todos sus pasos en paralelo.
+        """
+        if not steps:
+            return []
+
+        # Tools de solo lectura (se pueden paralelizar sin riesgo)
+        READ_TOOLS = {"read_file", "list_directory", "glob_file", "web_search",
+                       "deep_web_scrape", "screenshot", "check_system_resources"}
+
+        groups = []
+        current_group = []
+
+        for i, step in enumerate(steps):
+            tool = step.get("tool", "")
+            # Serial tools siempre van solas en su grupo
+            if tool in self.SERIAL_TOOLS:
+                if current_group:
+                    groups.append({"steps": list(current_group), "parallel": len(current_group) > 1})
+                    current_group = []
+                groups.append({"steps": [step], "parallel": False})
+                continue
+
+            # Si hay dependencia de datos entre este paso y el anterior, crear nuevo grupo
+            if current_group:
+                prev_step = current_group[-1]
+                prev_tool = prev_step.get("tool", "")
+                prev_args = prev_step.get("args", {})
+                curr_args = step.get("args", {})
+                # Detectar si curr_args referencia output de prev_step
+                has_dep = False
+                for k, v in curr_args.items():
+                    if isinstance(v, str):
+                        for pk, pv in prev_args.items():
+                            if isinstance(pv, str) and pv in v:
+                                has_dep = True
+                                break
+                if has_dep:
+                    groups.append({"steps": list(current_group), "parallel": len(current_group) > 1})
+                    current_group = [step]
+                    continue
+
+            current_group.append(step)
+
+        if current_group:
+            groups.append({"steps": list(current_group), "parallel": len(current_group) > 1})
+
+        return groups
+
+    def _execute_step(self, step: dict, step_num: int, total: int,
+                       plan: dict, progress_callback=None) -> dict:
+        """Ejecuta un paso individual del plan. Usado por workers paralelos."""
+        tool_name = step.get("tool")
+        args = step.get("args", {})
+        rationale = step.get("rationale", "")
+
+        step_msg = f"[Paso {step_num}/{total}] {rationale or tool_name}"
+        _set_phase("tool_executing", step_msg, tool_name=tool_name)
+        if progress_callback:
+            try: progress_callback("tool_executing", step_msg, step=step_num, tool_name=tool_name)
+            except Exception: pass
+
+        resolved_args = self._resolve_step_args(args, plan)
+
+        t0 = time.time()
+        try:
+            result = self.tools[tool_name](**resolved_args)
+            duration = int((time.time() - t0) * 1000)
+            if progress_callback:
+                try: progress_callback("tool_executed", f"Paso {step_num} OK ({duration}ms)",
+                                        step=step_num, tool_name=tool_name)
+                except Exception: pass
+            return {"step": step_num, "tool": tool_name, "ok": True, "result": result, "duration_ms": duration}
+        except Exception as e:
+            duration = int((time.time() - t0) * 1000)
+            err = f"Error en paso {step_num} ({tool_name}): {e}"
+            if progress_callback:
+                try: progress_callback("error", err, step=step_num, tool_name=tool_name)
+                except Exception: pass
+            return {"step": step_num, "tool": tool_name, "ok": False, "error": str(e), "duration_ms": duration}
+
+    def _execute_plan_parallel(self, plan: dict, progress_callback=None) -> Optional[str]:
+        """Ejecuta un plan con paralelizacion inteligente de pasos independientes."""
         if not plan or not plan.get("steps"):
             return None
 
+        steps = plan["steps"]
+        total = len(steps)
+
+        # 1. Analizar grupos de paralelizacion
+        groups = self._analyze_parallel_groups(steps)
+
         if TERMINAL_AVAILABLE and term:
-            term.info(f"Ejecutando plan {plan['plan_id']} con {len(plan['steps'])} paso(s)...")
+            n_parallel = sum(1 for g in groups if g["parallel"])
+            plan_id = plan.get("plan_id", "plan")
+            term.info(f"Plan {plan_id}: {total} pasos en {len(groups)} grupo(s) ({n_parallel} paralelos)")
+            try:
+                term.render_parallel_groups(groups, title=f"Plan {plan_id}")
+            except Exception:
+                pass
 
         results = []
-        for step in plan["steps"]:
-            step_num = step.get("n", len(results) + 1)
-            tool_name = step.get("tool")
-            args = step.get("args", {})
-            rationale = step.get("rationale", "")
+        global_step_counter = [0]
 
-            # Comunicar inicio de paso
-            step_msg = f"[Paso {step_num}/{len(plan['steps'])}] {rationale or tool_name}"
-            _set_phase("tool_executing", step_msg, tool_name=tool_name)
-            if TERMINAL_AVAILABLE and term:
-                term.tool_executing(tool_name, args)
-            if progress_callback:
-                try: progress_callback("tool_executing", step_msg, step=step_num, tool_name=tool_name)
-                except Exception: pass
+        # 2. Ejecutar grupos secuencialmente, pasos dentro de grupo en paralelo
+        for g_idx, group in enumerate(groups):
+            g_steps = group["steps"]
+            is_parallel = group["parallel"]
 
-            # Resolver argumentos con archivos candidatos
-            resolved_args = self._resolve_step_args(args, plan)
-
-            # Ejecutar tool
-            try:
-                result = self.tools[tool_name](**resolved_args)
-                results.append({"step": step_num, "tool": tool_name, "ok": True, "result": result})
+            group_label = f"Grupo {g_idx+1}/{len(groups)}"
+            if is_parallel:
                 if TERMINAL_AVAILABLE and term:
-                    term.success(f"Paso {step_num} completado: {tool_name}")
-            except Exception as e:
-                error_msg = f"Error en paso {step_num} ({tool_name}): {e}"
-                results.append({"step": step_num, "tool": tool_name, "ok": False, "error": str(e)})
-                if TERMINAL_AVAILABLE and term:
-                    term.error(error_msg)
-                # Continuar con siguiente paso o abortar según gravedad
-                continue
+                    term.info(f"{group_label}: {len(g_steps)} pasos en PARALELO ⚡")
+            else:
+                pass  # secuencial, se muestra normal
 
-            if progress_callback:
-                try: progress_callback("tool_executed", f"Paso {step_num} OK", step=step_num, tool_name=tool_name)
-                except Exception: pass
+            if is_parallel:
+                # Ejecutar todos los pasos del grupo en paralelo
+                step_futures = {}
+                with ThreadPoolExecutor(max_workers=min(len(g_steps), 8)) as executor:
+                    for step in g_steps:
+                        global_step_counter[0] += 1
+                        sn = global_step_counter[0]
+                        future = executor.submit(
+                            self._execute_step, step, sn, total, plan, progress_callback
+                        )
+                        step_futures[future] = step
 
-        # Verificar outputs
+                    for future in as_completed(step_futures):
+                        try:
+                            result = future.result(timeout=300)
+                            results.append(result)
+                        except Exception as e:
+                            results.append({
+                                "step": global_step_counter[0],
+                                "tool": step_futures[future].get("tool", "?"),
+                                "ok": False, "error": f"Thread error: {e}"
+                            })
+            else:
+                # Ejecutar pasos secuencialmente (1 por grupo)
+                for step in g_steps:
+                    global_step_counter[0] += 1
+                    sn = global_step_counter[0]
+                    result = self._execute_step(step, sn, total, plan, progress_callback)
+                    results.append(result)
+
+        # 3. Verificar outputs
+        missing = []
         if plan.get("verification"):
-            verified = []
-            missing = []
             for v in plan["verification"]:
                 if v.get("check") == "output_file_exists":
                     p = v["path"]
-                    if os.path.exists(p):
-                        verified.append(p)
-                    else:
+                    if not os.path.exists(p):
                         missing.append(p)
 
-        # Construir respuesta final
-        summary = f"✅ Plan {plan['plan_id']} completado ({len(results)} pasos)."
+        # 4. Ordenar resultados por numero de paso
+        results.sort(key=lambda r: r.get("step", 0))
+
+        # 5. Construir respuesta final
+        n_ok = sum(1 for r in results if r["ok"])
+        n_fail = sum(1 for r in results if not r["ok"])
+        total_duration = sum(r.get("duration_ms", 0) for r in results)
+        summary = f"Plan completado: {n_ok} OK, {n_fail} fallos ({total_duration}ms total)"
         if results:
             summary += "\n\nDetalle:\n"
             for r in results:
-                status = "✅" if r["ok"] else "❌"
-                summary += f"  {status} Paso {r['step']}: {r['tool']}"
+                status = "OK" if r["ok"] else "FAIL"
+                dur = r.get("duration_ms", 0)
+                summary += f"  [{status}] Paso {r['step']}: {r['tool']} ({dur}ms)"
                 if not r["ok"]:
-                    summary += f" → {r.get('error', 'Error desconocido')}"
+                    summary += f" -> {r.get('error', '?')}"
                 summary += "\n"
 
         if missing:
-            summary += f"\n⚠️ Archivos no generados: {', '.join(missing)}"
+            summary += f"\nArchivos no generados: {', '.join(missing)}"
 
         if TERMINAL_AVAILABLE and term:
-            term.success(summary)
+            if n_fail == 0:
+                term.success(summary)
+            else:
+                term.warn(summary)
 
         self.history.append({"role": "assistant", "content": summary})
         return summary
@@ -980,15 +1100,18 @@ class AutomyxAgent:
                            "multiples pasos"])
         if _needs_plan:
             plan_prompt = (
-                f"\n[GENERA PLAN ESTRUCTURADO - MULTI-STEP]\n"
+                f"\n[GENERA PLAN ESTRUCTURADO - MULTI-STEP - PARALELO]\n"
                 f"La tarea '{user_input[:80]}...' requiere multiples pasos.\n"
                 f"Genera PRIMERO un plan JSON con este esquema:\n"
                 f'{{"plan_id": "ts_XXXX", "steps": ['
                 f'{{"n": 1, "tool": "tool_name", "args": {{...}}, "rationale": "por que"}}, '
                 f'{{"n": 2, "tool": "...", "args": {{...}}, "rationale": "..."}}'
-                f'], "verification": [{{"check": "output_file_exists", "path": "..."}}]'
+                f'], "parallel_groups": [[1, 3], [2, 4]], "verification": [{{"check": "output_file_exists", "path": "..."}}]'
                 f"}}\n"
-                f"LUEGO ejecuta cada paso en orden. Usa SOLO herramientas disponibles."
+                f"IMPORTANTE: Si hay pasos SIN dependencia entre si, agrupalos en parallel_groups "
+                f"(ej: pasos 1 y 3 pueden correr en paralelo). "
+                f"Los pasos QUE ESCRIBEN archivos o abren programas NO pueden ir en paralelo."
+                f"LUEGO ejecuta los pasos. Usa SOLO herramientas disponibles."
             )
             self.history.append({"role": "system", "content": plan_prompt})
             if TERMINAL_AVAILABLE and term:
@@ -1095,45 +1218,49 @@ class AutomyxAgent:
                 final_answer = ai_message
                 break
 
-            # ---- FASE 3.5: PLAN NATIVO + FLOW-SCHEMA ----
-            # Si hay múltiples tool calls, extraerlas como plan y renderizar visualmente
+            # ---- FASE 3.5: PLAN NATIVO + EJECUCION PARALELA ----
+            # Si hay multiples tool calls, ejecutar en paralelo con plan visual
             if len(tool_calls) >= 2:
                 plan_steps = []
                 for idx, tc in enumerate(tool_calls, 1):
+                    action = tc.get("action", "?")
+                    args = tc.get("args", {})
+                    try:
+                        from core.intent_engine import resolve_tool_alias
+                        resolved = resolve_tool_alias(action)
+                        if resolved != action and resolved in self.tools:
+                            action = resolved
+                    except Exception:
+                        pass
                     plan_steps.append({
                         "n": idx,
-                        "tool": tc.get("action", "?"),
-                        "args": tc.get("args", {}),
-                        "rationale": tc.get("rationale", tc.get("action", "")),
+                        "tool": action,
+                        "args": args,
+                        "rationale": tc.get("rationale", action),
                     })
-                # Guardar en agent_status para el frontend
-                agent_status["plan"] = {
-                    "steps": plan_steps,
-                    "total": len(plan_steps),
-                    "completed": 0,
-                }
-                # Renderizar flow-schema en terminal
+                agent_status["plan"] = {"steps": plan_steps, "total": len(plan_steps), "completed": 0}
                 if TERMINAL_AVAILABLE and term:
-                    flow_phases = [{"id": f"step_{s['n']}", "label": s["tool"], "icon": "⬤"}
-                                   for s in plan_steps]
-                    agent_status["flow_phases"] = flow_phases
                     try:
-                        term.render_flow_schema(flow_phases, current_phase="step_1",
-                                                title=f"Plan de {len(plan_steps)} pasos")
-                        term.render_plan(plan_steps, title=f"Ejecución: {user_input[:50]}...")
+                        groups = self._analyze_parallel_groups(plan_steps)
+                        n_parallel = sum(1 for g in groups if g["parallel"])
+                        term.info(f"Plan de {len(plan_steps)} pasos ({n_parallel} en paralelo)")
+                        term.render_plan(plan_steps, title=f"Plan paralelo: {user_input[:40]}...")
                     except Exception:
                         pass
                 if progress_callback:
-                    try:
-                        progress_callback("plan_created", f"Plan de {len(plan_steps)} pasos generado",
-                                          plan=plan_steps)
-                    except Exception:
-                        pass
+                    try: progress_callback("plan_created", f"Plan de {len(plan_steps)} pasos en paralelo", plan=plan_steps)
+                    except Exception: pass
+                _plan_obj = {"plan_id": f"plan_{int(time.time())}", "steps": plan_steps}
+                _plan_result = self._execute_plan_parallel(_plan_obj, progress_callback=progress_callback)
+                if _plan_result:
+                    all_results_msg = _plan_result
+                else:
+                    all_results_msg = "Error ejecutando plan en paralelo."
             else:
                 agent_status["plan"] = None
                 agent_status["flow_phases"] = []
 
-            # ---- FASE 4: EJECUTAR CADA TOOL CALL CON VALIDACIÓN Y COMUNICACIÓN ----
+            # ---- FASE 4: EJECUTAR TOOL CALL UNICO (cuando no hay plan multi-paso) ----
             _set_phase("tool_executing", f"Ejecutando {len(tool_calls)} herramienta(s)...")
             all_results_msg = ""
             loop_detected = False
