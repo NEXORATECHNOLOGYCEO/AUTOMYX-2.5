@@ -227,7 +227,7 @@ def cmd_multitask(args):
             t = t.strip()
             if not t:
                 continue
-            tid = dp.submit(agent, t)
+            tid = dp.submit(t, agent=agent)
             ids.append(tid)
             ok(f"Submitted {tid}: {t[:60]}")
         if args.wait:

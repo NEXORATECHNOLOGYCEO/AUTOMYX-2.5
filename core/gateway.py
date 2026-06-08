@@ -146,7 +146,7 @@ class AutomyxGateway:
                     return {"ok": False, "detail": "No prompt provided"}
                 from core.multi_task import get_dispatcher
                 d = get_dispatcher()
-                task = d.submit(prompt, agent_id=agent_id)
+                task = d.submit(prompt, agent=self.agent, agent_id=agent_id)
                 return {"ok": True, "task_id": task.task_id}
             except Exception as e:
                 return {"ok": False, "detail": str(e)}
