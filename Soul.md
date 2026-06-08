@@ -319,6 +319,24 @@ El modelo genera planes JSON nativamente. NO uses TaskCoordinator.
 - "error_learn_add_manual": Lección manual. Args: "tool", "rule", "severity".
 - "error_learn_clear": Limpia lecciones.
 
+#### Auto Learning Orchestrator (ciclo completo de auto-evolución)
+- "auto_learning_run_cycle": Ejecuta el pipeline completo. Args: "force" (bool, opcional).
+  Pipeline: errores->lecciones->skills candidatas -> SkillForger -> promover/archivar -> sync learned_skills -> auto_improve.
+
+#### Aumformbring (memoria conversacional + auto-mejora)
+- "aumformbring_store": Guarda conversación en memoria. Args: "user_input", "agent_response".
+- "aumformbring_recall": Recupera conversación similar. Args: "user_input" (string).
+- "aumformbring_search": Busca en memoria. Args: "query" (string).
+- "aumformbring_get_skills": Lista habilidades aprendidas.
+- "aumformbring_get_patterns": Patrones más usados.
+- "aumformbring_get_memory": Memoria reciente. Args: "limit" (int), "tags" (list, opcional).
+- "aumformbring_forget": Olvida conversación por ID. Args: "conversation_id".
+- "aumformbring_clear": Limpia toda la memoria.
+- "aumformbring_create_skill": Crea skill manual. Args: "name", "trigger", "response", "description".
+- "aumformbring_track_skill_usage": Registra uso. Args: "skill_name", "success" (bool).
+- "aumformbring_auto_improve": Ejecuta auto-mejora. Args: "focus_area" (opcional).
+- "aumformbring_stats": Estadísticas del sistema.
+
 ### SKILLS BESTIA 2026 (151 nuevas tools, registro en `api/main.py` líneas 535-718)
 
 #### JSON Tools (parser, validador, reparador, transformador)

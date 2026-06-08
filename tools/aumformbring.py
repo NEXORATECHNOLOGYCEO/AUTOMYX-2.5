@@ -174,41 +174,90 @@ class Aumformbring:
         patterns = self._load_json(self.patterns_file)
         return sorted(patterns, key=lambda x: x["usage_count"], reverse=True)[:limit]
 
-    def recall_similar_conversation(self, user_input: str) -> Optional[Dict]:
-        """Recuerda una conversación similar"""
+    def recall_similar_conversation(self, user_input: str, threshold: float = 0.15) -> Optional[Dict]:
+        """Recuerda una conversación similar usando solapamiento de bigramas (más preciso)."""
         memory = self._load_json(self.memory_file)
-        input_lower = user_input.lower()
+        if not memory or not user_input.strip():
+            return None
+
+        def _tokenize(text: str) -> set:
+            words = text.lower().split()
+            bigrams = set()
+            for w in words:
+                if len(w) > 2:
+                    bigrams.add(w)
+            for i in range(len(words) - 1):
+                bigrams.add(f"{words[i]} {words[i+1]}")
+            return bigrams
+
+        input_tokens = _tokenize(user_input)
+        if not input_tokens:
+            return None
+
+        best_score = 0.0
+        best_conv = None
 
         for conv in reversed(memory):
-            conv_input = conv["user_input"].lower()
-            # Buscar similitud simple por palabras clave
-            common_words = set(input_lower.split()) & set(conv_input.split())
-            if len(common_words) >= 2:
-                return conv
+            conv_tokens = _tokenize(conv.get("user_input", ""))
+            if not conv_tokens:
+                continue
+            intersection = input_tokens & conv_tokens
+            score = len(intersection) / max(len(input_tokens), len(conv_tokens))
+            if score > best_score:
+                best_score = score
+                best_conv = conv
 
+        if best_score >= threshold:
+            return best_conv
         return None
 
-    def auto_improve(self, focus_area: str = None) -> Dict[str, Any]:
-        """Ejecuta una auto-mejora automática"""
+    def auto_improve(self, focus_area: str = None) -> List[Dict[str, Any]]:
+        """Ejecuta una auto-mejora automática y retorna acciones concretas tomadas."""
         improvements = self._load_json(self.improvements_file)
         memory = self._load_json(self.memory_file)
         patterns = self._load_json(self.patterns_file)
+        skills = self._load_json(self.skills_file)
 
+        actions_taken = []
+
+        # 1. Detectar skills infrautilizadas y archivarlas
+        for s in skills:
+            usage = s.get("usage_count", 0)
+            if usage > 0 and s.get("success_rate", 1.0) < 0.3:
+                s["active"] = False
+                actions_taken.append(f"archived_skill:{s.get('name','?')} (low success)")
+            elif usage == 0 and (datetime.now() - datetime.fromisoformat(s.get("learned_at", "2000-01-01"))).days > 7:
+                s["active"] = False
+                actions_taken.append(f"archived_skill:{s.get('name','?')} (unused 7d)")
+
+        # 2. Consolidar patrones duplicados
+        seen_patterns = set()
+        unique_patterns = []
+        for p in patterns:
+            pid = p.get("id", "")
+            if pid not in seen_patterns:
+                seen_patterns.add(pid)
+                unique_patterns.append(p)
+            else:
+                actions_taken.append(f"merged_duplicate_pattern:{p.get('pattern','')[:30]}")
+        self._save_json(self.patterns_file, unique_patterns)
+
+        # 3. Registrar mejora
         improvement = {
             "id": self._generate_hash(datetime.now().isoformat()),
             "timestamp": datetime.now().isoformat(),
             "focus_area": focus_area,
             "analysis": {
                 "total_conversations": len(memory),
-                "total_patterns": len(patterns),
-                "total_skills": len(self._load_json(self.skills_file)),
+                "total_patterns": len(unique_patterns),
+                "total_skills": len(skills),
                 "recent_activity": len([m for m in memory if (datetime.now() - datetime.fromisoformat(m["timestamp"])).days < 1])
             },
-            "actions_taken": [],
+            "actions_taken": actions_taken,
             "recommendations": []
         }
 
-        # Analizar patrones y generar recomendaciones
+        # 4. Generar recomendaciones basadas en datos reales
         if patterns:
             top_patterns = sorted(patterns, key=lambda x: x["usage_count"], reverse=True)[:3]
             improvement["recommendations"].append({
@@ -216,17 +265,16 @@ class Aumformbring:
                 "message": f"Los patrones más usados son: {', '.join([p['pattern'][:30] for p in top_patterns])}"
             })
 
-        # Buscar oportunidades de mejora
         if len(memory) > 10:
             improvement["recommendations"].append({
                 "type": "optimization",
-                "message": "Muchas conversaciones almacenadas. Considera entrenar un modelo personalizado."
+                "message": f"Muchas conversaciones almacenadas ({len(memory)}). Considera limpiar las antiguas."
             })
 
         improvements.append(improvement)
         self._save_json(self.improvements_file, improvements)
 
-        return improvement
+        return actions_taken
 
     def create_custom_skill(self, name: str, trigger: str, response: str, description: str = "") -> str:
         """Crea una habilidad personalizada manualmente"""
@@ -281,6 +329,19 @@ class Aumformbring:
         self._save_json(self.skills_file, [])
         self._save_json(self.patterns_file, [])
         return "Toda la memoria de AUMFORMBRING ha sido limpiada"
+
+    def track_skill_usage(self, skill_name: str, success: bool = True) -> None:
+        """Registra el uso de una skill aprendida y actualiza su tasa de éxito."""
+        skills = self._load_json(self.skills_file)
+        for s in skills:
+            if s.get("name", "").lower() == skill_name.lower():
+                s["usage_count"] = s.get("usage_count", 0) + 1
+                if not success:
+                    total = s["usage_count"]
+                    successes = total * s.get("success_rate", 1.0)
+                    s["success_rate"] = successes / max(total, 1)
+                break
+        self._save_json(self.skills_file, skills)
 
     def get_stats(self) -> Dict[str, Any]:
         """Obtiene estadísticas del sistema AUMFORMBRING"""

@@ -198,3 +198,27 @@ class ErrorLearningSystem:
         })
         ErrorLearningSystem._save(ErrorLearningSystem.LESSONS_FILE, lessons)
         return {"added": rule}
+
+    @staticmethod
+    def analyze_for_skill_creation() -> List[Dict[str, Any]]:
+        """Analiza errores recurrentes y retorna candidatos para crear skills preventivas.
+        Skills preventivas = lo que NO hacer o cómo recuperarse de un error común.
+        """
+        lessons = ErrorLearningSystem._load(ErrorLearningSystem.LESSONS_FILE, [])
+        if not lessons:
+            return []
+
+        # Errores con alta recurrencia y sugerencias claras
+        candidates = []
+        for L in lessons:
+            occurrences = L.get("occurrences", 0)
+            if occurrences >= 3:
+                candidates.append({
+                    "tool": L.get("tool", "?"),
+                    "error_pattern": L.get("error_pattern", "")[:100],
+                    "suggestion": L.get("suggestion", ""),
+                    "preventive_rule": L.get("preventive_rule", ""),
+                    "occurrences": occurrences,
+                    "type": "preventive",
+                })
+        return candidates

@@ -48,6 +48,14 @@ try:
     from tools.error_learning import ErrorLearningSystem
 except Exception:
     ErrorLearningSystem = None
+try:
+    from tools.aumformbring import aumformbring_system
+except Exception:
+    aumformbring_system = None
+try:
+    from tools.auto_learning_orchestrator import AutoLearningOrchestrator
+except Exception:
+    AutoLearningOrchestrator = None
 # TaskCoordinator REMOVIDO: el modelo coordina nativamente
 TaskCoordinator = None
 
@@ -340,6 +348,7 @@ class AutomyxAgent:
         self.history = [{"role": "system", "content": self.system_prompt}]
         self.tools: Dict[str, Callable] = {}
         self._tool_requires: Dict[str, list] = {}
+        self._conversation_count = 0
 
     def update_model(self, model_name: str):
         """Actualiza el modelo, proveedor y cliente en caliente."""
@@ -1429,12 +1438,28 @@ class AutomyxAgent:
                 term.warn(f"Alcanzado lÃ­mite de {max_iterations} iteraciones. Cerrando con respuesta parcial.")
             final_answer = ai_message if ai_message else "He realizado varias acciones pero el bucle alcanzÃ³ el lÃ­mite. AquÃ­ estÃ¡ lo Ãºltimo que hice:\n" + all_results_msg
 
-        # ---- FASE 6: CIERRE ----
+        # ---- FASE 6: CIERRE + AUTO-LEARNING ----
         _set_phase("idle", "Listo. Esperando tu siguiente solicitud.")
         agent_status["is_active"] = False
         agent_status["step"] = 0
         agent_status["total_steps"] = 0
         if TERMINAL_AVAILABLE and term:
             term.success(f"Respuesta final lista ({len(final_answer)} caracteres).")
+
+        # Store conversation in Aumformbring for pattern learning
+        if aumformbring_system is not None:
+            try:
+                aumformbring_system.store_conversation(user_input, final_answer)
+            except Exception:
+                pass
+
+        # Periodic auto-learning cycle
+        self._conversation_count += 1
+        cycle_interval = 5
+        if AutoLearningOrchestrator is not None and self._conversation_count % cycle_interval == 0:
+            try:
+                AutoLearningOrchestrator.run_full_cycle()
+            except Exception:
+                pass
 
         return final_answer
