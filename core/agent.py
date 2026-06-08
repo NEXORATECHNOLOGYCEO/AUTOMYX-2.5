@@ -367,24 +367,73 @@ class AutomyxAgent:
     def _parse_tool_calls(self, response_text: str) -> list:
         """
         Parsea tool calls usando el parser blindado de core/json_protocol.py.
-        5 capas: markdown fence → balanced braces → repair → regex → schema validation.
-        Retorna lista de dicts {action, args} compatible con el cÃ³digo existente.
+        5 capas: markdown fence -> balanced braces -> repair -> regex -> schema validation.
+        Ademas detecta planes JSON (plan_id + steps) y los convierte a tool calls.
+        Retorna lista de dicts {action, args} compatible con el codigo existente.
         """
+        # === CAPA 0: Detectar plan JSON con steps y convertirlo ===
+        try:
+            _detected_plan = None
+            # Buscar cualquier JSON que tenga plan_id y steps
+            for _maybe_json in re.finditer(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL | re.IGNORECASE):
+                try:
+                    _parsed = json.loads(_maybe_json.group(1))
+                    if isinstance(_parsed, dict) and "steps" in _parsed and isinstance(_parsed["steps"], list):
+                        _detected_plan = _parsed
+                        break
+                except json.JSONDecodeError:
+                    pass
+            if not _detected_plan:
+                # Buscar sin fences tambien
+                _depth = 0
+                _start = -1
+                for _i, _c in enumerate(response_text):
+                    if _c == '{':
+                        if _depth == 0: _start = _i
+                        _depth += 1
+                    elif _c == '}':
+                        _depth -= 1
+                        if _depth == 0 and _start != -1:
+                            try:
+                                _p = json.loads(response_text[_start:_i+1])
+                                if isinstance(_p, dict) and "steps" in _p and isinstance(_p["steps"], list):
+                                    _detected_plan = _p
+                                    break
+                            except json.JSONDecodeError:
+                                pass
+                            _start = -1
+            if _detected_plan:
+                tool_calls_from_plan = []
+                for _step in _detected_plan["steps"]:
+                    tc = {
+                        "action": _step.get("tool") or _step.get("action", ""),
+                        "args": _step.get("args", {}),
+                        "rationale": _step.get("rationale", ""),
+                    }
+                    if tc["action"]:
+                        tool_calls_from_plan.append(tc)
+                if tool_calls_from_plan:
+                    logger.info(f"[plan] Plan JSON detectado con {len(tool_calls_from_plan)} pasos")
+                    # Guardar el plan original completo
+                    _detected_plan["_from_llm"] = True
+                    return tool_calls_from_plan
+        except Exception:
+            pass
+
+        # === CAPA 1: Parser blindado json_protocol ===
         if JSON_PROTOCOL_AVAILABLE and parse_response is not None:
             try:
                 result: ParseResult = parse_response(response_text)
-                # Log calidad y reparaciones para debugging
                 if result.repairs_applied if hasattr(result, 'repairs_applied') else False:
                     logger.info(f"[json_protocol] repairs: {getattr(result, 'repairs_applied', [])}")
                 if result.warnings:
                     for w in result.warnings[:3]:
                         logger.warning(f"[json_protocol] {w}")
-                # Convertir a dicts {action, args}
                 return [tc.to_dict() for tc in result.tool_calls]
             except Exception as e:
                 logger.error(f"[json_protocol] error, fallback a parser legacy: {e}")
 
-        # --- FALLBACK: parser legacy de 2 pasos ---
+        # === CAPA 2: FALLBACK legacy ===
         tool_calls = []
         matches = re.finditer(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL | re.IGNORECASE)
         for match in matches:
@@ -854,27 +903,41 @@ class AutomyxAgent:
             except Exception: pass
         self._communicate_user_request(user_input)
 
-        # Pre-procesar con intent engine v2.5: normaliza y agrega contexto
+        # Pre-procesar con intent engine v2.5: normaliza y resuelve tool concreta
+        _intent_tool_hint = None
         try:
-            from core.intent_engine import understand, resolve_tool_alias
+            from core.intent_engine import understand, resolve_tool_alias, TOOL_ALIASES
             understanding = understand(user_input)
             if understanding["intent"] != "unknown":
+                intent_name = understanding["intent"]
+                # Intentar resolver el intent a una tool concreta
+                resolved_tool = resolve_tool_alias(intent_name)
+                tool_hint = ""
+                if resolved_tool != intent_name:
+                    _intent_tool_hint = resolved_tool
+                    tool_hint = f"\nLa herramienta correcta para '{intent_name}' es: '{resolved_tool}'. USA ESTA."
+                elif intent_name in TOOL_ALIASES:
+                    tool_hint = f"\nLa herramienta correcta para '{intent_name}' es: '{TOOL_ALIASES[intent_name]}'. USA ESTA."
+                entities = understanding.get('entities', {})
                 intent_block = (
                     f"\n[INTENT ENGINE v2.5]\n"
-                    f"Detecté que quieres: {understanding['intent']} "
+                    f"Detecte que quieres: {intent_name} "
                     f"(confianza {understanding['intent_confidence']:.0%})\n"
                     f"Texto normalizado: \"{understanding['normalized']}\"\n"
                     f"Palabra clave: \"{understanding.get('matched_keyword', '')}\"\n"
-                    f"Entidades: {understanding.get('entities', {})}\n"
-                    f"INSTRUCCIÓN: Usa este intent para decidir la PRIMERA herramienta. "
-                    f"Si el intent es claro, ejecuta directamente sin pedir aclaración."
+                    f"Entidades: {entities}\n"
+                    f"INSTRUCCION: Usa este intent para decidir la PRIMERA herramienta.{tool_hint}"
+                    f" Si el intent es claro, ejecuta directamente sin pedir aclaracion."
                 )
                 self.history.append({"role": "system", "content": intent_block})
         except Exception:
             pass
 
         # Construir el system prompt con filtros de permisos
-        tools_text = self.system_prompt.split("Herramienta")[1] if "Herramienta" in self.system_prompt else ""
+        # Buscar la seccion de herramientas (puede ser "Herramientas:" o "Herramienta:")
+        import re as _re_tool
+        _tool_section_match = _re_tool.search(r'(Herramientas?:?\s*[\s\S]*)', self.system_prompt)
+        tools_text = _tool_section_match.group(1) if _tool_section_match else ""
         if agent_skills:
             if not agent_skills.get("write", True):
                 blocked_tools = ["write_file", "append_to_file", "create_directory", "delete_file",
@@ -910,20 +973,18 @@ class AutomyxAgent:
             except Exception:
                 pass
 
-        # Plan autogenerado (model-native) para tareas complejas
-        # Siempre incentivar al modelo a generar planes para tareas multi-paso
+        # Plan autogenerado (model-native) solo para tareas MULTI-PASO claras
         _needs_plan = any(kw in user_input.lower() for kw in
-                          ["primer", "luego", "despuÃ©s", "finalmente", "y tambiÃ©n",
-                           "varios", "mÃºltiples", "organiza", "todo",
-                           "paso", "pasos", "secuencia", "crea", "haz",
-                           "necesito que", "quiero que"])
+                          ["primer paso", "luego", "despues", "finalmente",
+                           "paso a paso", "secuencia", "varios pasos",
+                           "multiples pasos"])
         if _needs_plan:
             plan_prompt = (
                 f"\n[GENERA PLAN ESTRUCTURADO - MULTI-STEP]\n"
-                f"La tarea '{user_input[:80]}...' requiere mÃºltiples pasos.\n"
+                f"La tarea '{user_input[:80]}...' requiere multiples pasos.\n"
                 f"Genera PRIMERO un plan JSON con este esquema:\n"
                 f'{{"plan_id": "ts_XXXX", "steps": ['
-                f'{{"n": 1, "tool": "tool_name", "args": {{...}}, "rationale": "por quÃ©"}}, '
+                f'{{"n": 1, "tool": "tool_name", "args": {{...}}, "rationale": "por que"}}, '
                 f'{{"n": 2, "tool": "...", "args": {{...}}, "rationale": "..."}}'
                 f'], "verification": [{{"check": "output_file_exists", "path": "..."}}]'
                 f"}}\n"
@@ -1108,19 +1169,20 @@ class AutomyxAgent:
                     all_results_msg += f"[Tool {idx}] {validation_error}\n"
                     continue
 
-                # 4.2: DetecciÃ³n de loop
-                action_signature = f"{action}_{json.dumps(args, sort_keys=True)}"
-                if recent_actions.count(action_signature) >= 2:
+                # 4.2: DetecciÃ³n de loop (por acciÃ³n repetida o similar)
+                _same_action_count = sum(1 for ra in recent_actions if ra.get("action") == action)
+                if _same_action_count >= 3:
                     loop_detected = True
                     if TERMINAL_AVAILABLE and term:
-                        term.tool_loop_warning(action, recent_actions.count(action_signature))
+                        term.tool_loop_warning(action, _same_action_count)
                     all_results_msg += (
-                        f"SISTEMA: DetectÃ© que intentaste '{action}' con los mismos argumentos "
-                        f"{recent_actions.count(action_signature)} veces sin Ã©xito. DETENTE y prueba otra estrategia.\n"
+                        f"SISTEMA: Detecte que intentaste '{action}' "
+                        f"{_same_action_count} veces seguidas sin exito. "
+                        f"CAMBIA DE ESTRATEGIA. Prueba otra herramienta o enfoque.\n"
                     )
                     continue
-                recent_actions.append(action_signature)
-                if len(recent_actions) > 10:
+                recent_actions.append({"action": action, "args": args})
+                if len(recent_actions) > 15:
                     recent_actions.pop(0)
 
                 # 4.3: Comunicar QUÃ‰ voy a hacer

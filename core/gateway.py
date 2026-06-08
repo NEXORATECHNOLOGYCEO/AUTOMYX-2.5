@@ -186,7 +186,39 @@ class AutomyxGateway:
                     return
             
             await self.manager.connect(websocket)
-            
+
+            # Registrar listener de multi-task para esta conexion
+            _mt_listener_cb = None
+            _mt_session_id = None
+            try:
+                from core.multi_task import get_dispatcher
+                _mt_dispatcher = get_dispatcher()
+                _mt_session_id = f"ws_{id(websocket)}_{time.time()}"
+                def _mt_progress_listener(payload):
+                    """Envia progreso de multi-task por WebSocket (payload es dict)."""
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            self.manager.send_personal_message({
+                                "type": "event",
+                                "event": "multitask_progress",
+                                "payload": {
+                                    "task_id": payload.get("task_id", ""),
+                                    "status": payload.get("status", ""),
+                                    "phase": payload.get("phase", ""),
+                                    "action": payload.get("action", ""),
+                                    "progress": payload.get("progress", 0),
+                                    "result_preview": payload.get("result_preview", ""),
+                                }
+                            }, websocket),
+                            asyncio.get_event_loop()
+                        )
+                    except Exception:
+                        pass
+                _mt_listener_cb = _mt_progress_listener
+                _mt_dispatcher.add_session_listener(_mt_session_id, _mt_listener_cb)
+            except Exception:
+                pass
+
             try:
                 # Enviar mensaje de bienvenida
                 await self.manager.send_personal_message({
@@ -212,6 +244,14 @@ class AutomyxGateway:
             except Exception as e:
                 print(f"[GATEWAY] Error en WebSocket: {e}")
                 self.manager.disconnect(websocket)
+            finally:
+                # Limpiar listener de multi-task
+                if _mt_session_id and _mt_listener_cb:
+                    try:
+                        from core.multi_task import get_dispatcher
+                        get_dispatcher().remove_session_listener(_mt_session_id, _mt_listener_cb)
+                    except Exception:
+                        pass
     
     async def _handle_message(self, data: dict, websocket: WebSocket):
         """Maneja mensajes entrantes del WebSocket"""
@@ -254,7 +294,7 @@ class AutomyxGateway:
                 }
             
             elif method == "agent":
-                # Ejecutar agente
+                # Ejecutar agente SIN bloquear el WebSocket
                 user_input = params.get("message", "")
                 session_id = params.get("session_id", "default")
                 
@@ -265,9 +305,41 @@ class AutomyxGateway:
                 }
                 await self.manager.send_personal_message(response, websocket)
                 
-                # Ejecutar agente y enviar streaming
+                # Ejecutar en executor para no bloquear el loop de WebSocket
+                loop = asyncio.get_event_loop()
+                
+                # Crear progress_callback que envía updates vía WebSocket
+                async def _send_progress(phase, msg, **kw):
+                    try:
+                        await self.manager.send_personal_message({
+                            "type": "event",
+                            "event": "agent_progress",
+                            "payload": {
+                                "run_id": msg_id,
+                                "phase": phase,
+                                "message": msg,
+                                "step": kw.get("step"),
+                                "tool_name": kw.get("tool_name"),
+                                "plan": kw.get("plan"),
+                            }
+                        }, websocket)
+                    except Exception:
+                        pass
+                
+                def _progress_callback(phase, msg, **kw):
+                    """Callback síncrono que programa el envío asíncrono."""
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            _send_progress(phase, msg, **kw), loop
+                        )
+                    except Exception:
+                        pass
+                
                 try:
-                    result = self.agent.run(user_input)
+                    result = await loop.run_in_executor(
+                        None,
+                        lambda: self.agent.run(user_input, progress_callback=_progress_callback, max_iterations=15)
+                    )
                     await self.manager.send_personal_message({
                         "type": "event",
                         "event": "agent",
