@@ -29,7 +29,7 @@ SLANG_NORMALIZER: Dict[str, str] = {
     "ya mismo": "ahora",
     "ya mero": "ahora",
     "dele": "ejecutar",
-    "dale": "ejecutar",
+    # "dale": "ejecutar",  # remover: "dale" es confirmación, no "ejecutar programa"
     "metele": "ejecutar",
     "mándale": "ejecutar",
     "hágale": "ejecutar",
@@ -554,14 +554,25 @@ INTENT_KEYWORDS: Dict[str, List[str]] = {
         "cómo te va", "como te va", "cómo vamos", "como vamos",
         "todo bien", "cómo vas", "que tal todo", "qué tal todo",
         "hi there", "hey there", "yo", "aló", "aló?", "buenas buenas",
+        # Confirmaciones de acción - NO son saludos
+        "dale", "vamos", "hazlo", "adelante", "sí", "si", "ok", "listo",
+        "entendido", "perfecto", "exacto", "correcto",
     ],
     "help": [
         "ayuda", "ayúdame", "necesito ayuda", "qué puedes hacer", "qué sabes hacer",
         "para qué sirves", "help", "qué haces", "explicame", "explícame",
         "qué funciones tienes", "muéstrame qué puedes hacer", "enséñame",
         "que puedes hacer", "que sabes hacer", "para que sirves", "que haces",
-        "muéstrame qué hacer", "mostrame que hacer", "a ver qué haces",
-        "mira qué haces", "muestrame", "mostrame", "enséñame a usar",
+        "muéstrame qué hacer", "mostrame que hacer", "enséñame a usar",
+        # Variantes "nosotros" y coloquiales (incluye formas normalizadas)
+        "que podemos hacer", "que podemos hacer de letal", "que podemos hacer asi de letal",
+        "que podemos hacer juntos", "que cosas puedes hacer", "que cosas sabes hacer",
+        "dime que haces", "dime que puedes hacer", "muestrame tu poder",
+        "cuales son tus funciones", "cuales son tus habilidades",
+        "que podemos hacer de letal", "que podemos hacer asi de letal",
+        "que podemos hacer asi", "que mas puedes hacer", "que mas sabes hacer",
+        # Formas normalizadas (tras normalización agresiva)
+        "podemos crear", "podemos hacer", "que crear", "que hacer",
     ],
     "thanks": [
         "gracias", "muchas gracias", "te lo agradezco", "mil gracias",

@@ -630,6 +630,107 @@ class AutomyxAgent:
         if intent_summary:
             term.info(intent_summary)
 
+    # ---- PLAN EXECUTOR ----
+    def _execute_plan(self, plan: dict, progress_callback=None) -> Optional[str]:
+        """Ejecuta un plan paso a paso con comunicación perfecta."""
+        if not plan or not plan.get("steps"):
+            return None
+
+        if TERMINAL_AVAILABLE and term:
+            term.info(f"Ejecutando plan {plan['plan_id']} con {len(plan['steps'])} paso(s)...")
+
+        results = []
+        for step in plan["steps"]:
+            step_num = step.get("n", len(results) + 1)
+            tool_name = step.get("tool")
+            args = step.get("args", {})
+            rationale = step.get("rationale", "")
+
+            # Comunicar inicio de paso
+            step_msg = f"[Paso {step_num}/{len(plan['steps'])}] {rationale or tool_name}"
+            _set_phase("tool_executing", step_msg, tool_name=tool_name)
+            if TERMINAL_AVAILABLE and term:
+                term.tool_executing(tool_name, args)
+            if progress_callback:
+                try: progress_callback("tool_executing", step_msg, step=step_num, tool_name=tool_name)
+                except Exception: pass
+
+            # Resolver argumentos con archivos candidatos
+            resolved_args = self._resolve_step_args(args, plan)
+
+            # Ejecutar tool
+            try:
+                result = self.tools[tool_name](**resolved_args)
+                results.append({"step": step_num, "tool": tool_name, "ok": True, "result": result})
+                if TERMINAL_AVAILABLE and term:
+                    term.success(f"Paso {step_num} completado: {tool_name}")
+            except Exception as e:
+                error_msg = f"Error en paso {step_num} ({tool_name}): {e}"
+                results.append({"step": step_num, "tool": tool_name, "ok": False, "error": str(e)})
+                if TERMINAL_AVAILABLE and term:
+                    term.error(error_msg)
+                # Continuar con siguiente paso o abortar según gravedad
+                continue
+
+            if progress_callback:
+                try: progress_callback("tool_executed", f"Paso {step_num} OK", step=step_num, tool_name=tool_name)
+                except Exception: pass
+
+        # Verificar outputs
+        if plan.get("verification"):
+            verified = []
+            missing = []
+            for v in plan["verification"]:
+                if v.get("check") == "output_file_exists":
+                    p = v["path"]
+                    if os.path.exists(p):
+                        verified.append(p)
+                    else:
+                        missing.append(p)
+
+        # Construir respuesta final
+        summary = f"✅ Plan {plan['plan_id']} completado ({len(results)} pasos)."
+        if results:
+            summary += "\n\nDetalle:\n"
+            for r in results:
+                status = "✅" if r["ok"] else "❌"
+                summary += f"  {status} Paso {r['step']}: {r['tool']}"
+                if not r["ok"]:
+                    summary += f" → {r.get('error', 'Error desconocido')}"
+                summary += "\n"
+
+        if missing:
+            summary += f"\n⚠️ Archivos no generados: {', '.join(missing)}"
+
+        if TERMINAL_AVAILABLE and term:
+            term.success(summary)
+
+        self.history.append({"role": "assistant", "content": summary})
+        return summary
+
+    def _resolve_step_args(self, args: dict, plan: dict) -> dict:
+        """Resuelve placeholders como <PRIMER_VIDEO_ENCONTRADO> con archivos reales."""
+        if not args:
+            return args
+        resolved = {}
+        candidates = plan.get("candidate_files", [])
+        first_video = candidates[0]["path"] if candidates else None
+        folder = plan.get("preconditions", [{}])[0].get("path") if plan.get("preconditions") else None
+
+        for k, v in args.items():
+            if isinstance(v, str):
+                if v == "<PRIMER_VIDEO_ENCONTRADO>" and first_video:
+                    resolved[k] = first_video
+                elif v == "<CARPETA_DESTINO>" and folder:
+                    resolved[k] = folder
+                elif v == "<EXTRAER_DEL_TEXTO>":
+                    resolved[k] = v  # El LLM lo inferirá
+                else:
+                    resolved[k] = v
+            else:
+                resolved[k] = v
+        return resolved
+
     def run(self, user_input: str, custom_system_prompt: str = None, agent_skills: dict = None,
             agent_id: str = "main", progress_callback=None, images: list = None) -> str:
         """Bucle principal del agente con fases claras y comunicación rica.
@@ -823,6 +924,10 @@ class AutomyxAgent:
                     self.history.append({"role": "system", "content": f"[PLAN AUTOGENERADO - SÃGUELO]\n{plan_summary}\n\nUsa los archivos candidatos detectados. NO inventes rutas."})
                     if TERMINAL_AVAILABLE and term:
                         term.info("Plan estructurado generado. Lo voy a seguir paso a paso.")
+                    # EJECUTAR PLAN EXPLÍCITAMENTE paso a paso
+                    plan_result = self._execute_plan(plan, progress_callback)
+                    if plan_result:
+                        return plan_result
             except Exception:
                 pass
 

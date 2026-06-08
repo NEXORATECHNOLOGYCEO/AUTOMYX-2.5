@@ -144,7 +144,8 @@ class TaskCoordinator:
             "imagen": ["imagen", "image", "foto", "picture", "png", "jpg"],
             "audio": ["audio", "cancion", "canción", "mp3", "música", "musica", "sonido"],
             "documento": ["pdf", "documento", "doc", "informe", "reporte", "contrato"],
-            "codigo": ["código", "codigo", "script", "programa", "py", "js"],
+            "codigo": ["código", "codigo", "script", "programa", "py", "js", "html", "css"],
+            "juego": ["juego", "game", "jueguito", "minijuego", "2d", "3d", "canvas", "phaser", "pixi"],
             "carpeta": ["carpeta", "folder", "directorio"],
         }
         for tp, keys in types.items():
@@ -208,6 +209,7 @@ class TaskCoordinator:
                     "audio": list(TaskCoordinator.AUDIO_EXTS),
                     "documento": list(TaskCoordinator.DOC_EXTS),
                     "codigo": list(TaskCoordinator.CODE_EXTS),
+                    "juego": [".html", ".js", ".css", ".json"],  # archivos web para juegos
                 }
                 exts = ext_map.get(intent["target_type"], [])
                 found = TaskCoordinator.find_files(res["resolved"], extensions=exts, limit=10)
@@ -261,6 +263,70 @@ class TaskCoordinator:
                 "n": 1, "tool": "execute_cmd",
                 "args": {"command": "pip install fpdf2 -q"},
                 "rationale": "Asegura que fpdf2 esté instalado para generar PDFs profesionales."
+            })
+            plan["verification"].append({"check": "output_file_exists", "path": output})
+
+        elif action == "crear" and tt == "juego":
+            # Crear juego 2D en HTML5/Canvas - archivo principal
+            output_html = os.path.join(TaskCoordinator.DOWNLOADS, intent.get("folder_hint", "Downloads"), f"game_{plan['plan_id']}.html")
+            plan["steps"].append({
+                "n": 1,
+                "tool": "write_file",
+                "args": {
+                    "path": output_html,
+                    "content": TaskCoordinator._generate_2d_game_template(intent)
+                },
+                "rationale": "Crea el juego 2D profesional en HTML5/Canvas."
+            })
+            # Crear archivo JS separado para lógica
+            output_js = output_html.replace(".html", ".js")
+            plan["steps"].append({
+                "n": 2,
+                "tool": "write_file",
+                "args": {
+                    "path": output_js,
+                    "content": TaskCoordinator._generate_game_js_template(intent)
+                },
+                "rationale": "Crea la lógica del juego en JavaScript separado."
+            })
+            plan["verification"].append({"check": "output_file_exists", "path": output_html})
+
+        elif action == "crear" and tt == "video":
+            # Crear video base (slideshow, color, etc.)
+            output = os.path.join(TaskCoordinator.DOWNLOADS, intent.get("folder_hint", "Downloads"), f"video_{plan['plan_id']}.mp4")
+            plan["steps"].append({
+                "n": 1,
+                "tool": "create_tiktok_edit",
+                "args": {"input_path": "<PRIMER_VIDEO_ENCONTRADO>", "output_path": output, "add_subtitles": False},
+                "rationale": "Crea video base para edición posterior."
+            })
+            plan["verification"].append({"check": "output_file_exists", "path": output})
+
+        elif action == "crear" and tt == "imagen":
+            output = os.path.join(TaskCoordinator.DOWNLOADS, intent.get("folder_hint", "Downloads"), f"imagen_{plan['plan_id']}.png")
+            plan["steps"].append({
+                "n": 1,
+                "tool": "generate_gemini_image",
+                "args": {"prompt": user_request, "output_path": output},
+                "rationale": "Genera imagen con IA según descripción."
+            })
+            plan["verification"].append({"check": "output_file_exists", "path": output})
+
+        elif action == "crear" and tt == "codigo":
+            # Determinar extensión por mención
+            ext = ".py"
+            if any(k in user_request.lower() for k in ["html", "web", "página", "sitio"]):
+                ext = ".html"
+            elif any(k in user_request.lower() for k in ["js", "javascript", "script"]):
+                ext = ".js"
+            elif any(k in user_request.lower() for k in ["css", "estilo"]):
+                ext = ".css"
+            output = os.path.join(TaskCoordinator.DOWNLOADS, intent.get("folder_hint", "Downloads"), f"codigo_{plan['plan_id']}{ext}")
+            plan["steps"].append({
+                "n": 1,
+                "tool": "write_file",
+                "args": {"path": output, "content": f"# Código generado para: {user_request}\n\n# TODO: Implementar\n"},
+                "rationale": "Crea archivo de código base."
             })
             plan["verification"].append({"check": "output_file_exists", "path": output})
 
