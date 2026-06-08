@@ -606,11 +606,24 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 f.write(ass_content)
 
             # --- 7. Quemar subtítulos con ffmpeg ---
-            # Windows: usar subfile protocol con forward slashes + escape
-            safe_ass = ass_path.replace('\\', '/').replace(':', '\\:')
+            # Obtener resolución del video para original_size (requerido en ffmpeg git builds)
+            _w, _h = 1920, 1080
+            try:
+                _fp = which("ffprobe") or "ffprobe"
+                _ps = subprocess.run(
+                    [_fp, "-v", "error",
+                     "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                     "-of", "csv=p=0", input_path],
+                    capture_output=True, text=True, timeout=10,
+                )
+                _parts = _ps.stdout.strip().split(",")
+                if len(_parts) == 2:
+                    _w, _h = int(_parts[0]), int(_parts[1])
+            except Exception:
+                pass
             cmd = [
                 ffmpeg_bin, "-y", "-i", input_path,
-                "-vf", f"ass={safe_ass}",
+                "-vf", f"subtitles={ass_path}:original_size={_w}x{_h}",
                 "-c:a", "aac", "-b:a", "128k",
                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
                 "-movflags", "+faststart",
