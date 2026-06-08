@@ -133,7 +133,7 @@ class AutomyxGateway:
             try:
                 from core.multi_task import get_dispatcher
                 d = get_dispatcher()
-                return {"tasks": d.list_tasks()}
+                return {"tasks": [t.to_dict() for t in d.list_tasks()]}
             except Exception:
                 return {"tasks": []}
 

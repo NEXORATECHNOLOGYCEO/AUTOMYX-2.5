@@ -67,12 +67,31 @@ class Task:
     cancelled: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
-        d = asdict(self)
-        d["status"] = self.status.value
-        d["duration_s"] = (
-            (self.completed_at or time.time()) - (self.started_at or self.created_at)
-        )
-        return d
+        return {
+            "task_id": self.task_id,
+            "session_id": self.session_id,
+            "user_input": self.user_input,
+            "agent_id": self.agent_id,
+            "model": self.model,
+            "custom_prompt": self.custom_prompt,
+            "status": self.status.value,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "result": self.result[:500] if self.result else "",
+            "error": self.error[:200] if self.error else "",
+            "steps": self.steps,
+            "tools_used": self.tools_used[:10],
+            "current_phase": self.current_phase,
+            "current_action": self.current_action,
+            "progress": self.progress,
+            "intent_data": self.intent_data,
+            "normalized_input": self.normalized_input,
+            "cancelled": self.cancelled,
+            "duration_s": (
+                (self.completed_at or time.time()) - (self.started_at or self.created_at)
+            ),
+        }
 
 
 # ---------------------------------------------------------------------------
