@@ -36,7 +36,7 @@ from typing import Optional
 # Añadir directorio raíz al path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.agent import AutomyxAgent, agent_status, OllamaManager
+from core.agent import AutomyxAgent, get_agent_status, OllamaManager
 from core.gateway import create_gateway_app
 from core.config import config
 from tools.pc_tools import PCTools
@@ -876,7 +876,7 @@ _STARTUP_TS = _time.time()
 
 @app.get("/api/agent/status")
 async def get_agent_status_endpoint(_: bool = Depends(verify_gateway_token)):
-    return agent_status
+    return get_agent_status()
 
 
 @app.get("/api/health")
@@ -902,10 +902,10 @@ async def health_endpoint():
         gpu_available, gpu_name = False, None
     return {
         "status": "ok",
-        "agent_running": agent_status.get("running", True) if isinstance(agent_status, dict) else True,
+        "agent_running": get_agent_status().get("is_active", True),
         "model": getattr(agent, "model_name", "?"),
         "provider": getattr(agent, "provider", "?"),
-        "phase": agent_status.get("phase", "idle") if isinstance(agent_status, dict) else "idle",
+        "phase": get_agent_status().get("phase", "idle"),
         "uptime_s": _t.time() - _STARTUP_TS,
         "cpu_percent": cpu,
         "memory_percent": mem.percent if mem else None,
@@ -1657,16 +1657,6 @@ async def clear_chat_endpoint(_: bool = Depends(verify_gateway_token)):
     return {"status": "success", "message": "Memoria reiniciada"}
 
 
-@app.post("/api/clear_memory")
-async def clear_memory_endpoint(_: bool = Depends(verify_gateway_token)):
-    agent.clear_memory()
-    try:
-        aumformbring_system.clear_all_memory()
-    except Exception:
-        pass
-    return {"status": "success", "message": "Memoria del agente y recuerdos eliminados"}
-
-
 @app.post("/api/chat")
 async def chat_endpoint(req: ChatRequest, request: Request, _: bool = Depends(verify_gateway_token)):
     from fastapi.responses import StreamingResponse
@@ -1705,9 +1695,10 @@ async def chat_endpoint(req: ChatRequest, request: Request, _: bool = Depends(ve
     if req.model and req.model != agent.model_name:
         agent.update_model(req.model)
         
-    # Ejecutar en thread separado para no bloquear el event loop
-    loop = asyncio.get_event_loop()
-    response = await loop.run_in_executor(None, agent.run, req.message, custom_prompt, agent_skills)
+    # Lógica antigua para compatibilidad si no se solicita streaming en el request
+    # Para simplificar y no romper el cliente, mantenemos la interfaz REST estándar 
+    # pero el LLM por debajo ya está usando streaming real-time hacia la consola
+    response = agent.run(req.message, custom_system_prompt=custom_prompt, agent_skills=agent_skills)
 
     # AUMFORMBRING: Almacenar la conversación automáticamente para aprendizaje
     aumformbring_system.store_conversation(

@@ -2,11 +2,24 @@ import os
 import subprocess
 import stat
 import logging
+import threading
 from pathlib import Path
 from typing import Optional, Any
 from tools.pc_tools import PCTools
 
 logger = logging.getLogger("automyx.video")
+
+# File locks para evitar conflictos en ediciones concurrentes del mismo video
+_video_file_locks: dict[str, threading.RLock] = {}
+_video_locks_lock = threading.Lock()
+
+def _get_video_lock(path: str) -> threading.RLock:
+    """Obtiene (o crea) un lock por ruta de archivo."""
+    norm = os.path.normpath(PCTools._resolve_path(path))
+    with _video_locks_lock:
+        if norm not in _video_file_locks:
+            _video_file_locks[norm] = threading.RLock()
+        return _video_file_locks[norm]
 
 class VideoTools:
     """
@@ -662,6 +675,121 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return f"❌ Error en subtítulos: {e}\n{traceback.format_exc()[:600]}"
     
     @staticmethod
+    def _generate_ass_subtitles(
+        input_path: str,
+        language: str = "es",
+        style: str = "hype",
+        position: str = "center",
+        **overrides
+    ) -> str:
+        """Genera archivo ASS de subtítulos con Whisper (sin quemar en vídeo)."""
+        try:
+            from core.subtitle_presets import get_preset, build_ass_style, ass_color
+            from core.auto_install import ensure_packages
+
+            try:
+                ensure_packages(["whisper"], verbose=False)
+            except Exception:
+                pass
+
+            input_path = PCTools._resolve_path(input_path)
+            if not os.path.exists(input_path):
+                return ""
+
+            # Extraer audio
+            audio_path = "_automyx_temp_audio.wav"
+            ffmpeg_bin = "ffmpeg"
+            af = subprocess.run(
+                [ffmpeg_bin, "-y", "-i", input_path, "-vn",
+                 "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+                 "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", audio_path],
+                capture_output=True, text=True, timeout=120,
+            )
+            if af.returncode != 0:
+                return ""
+
+            # Transcribir con Whisper
+            try:
+                import whisper
+                model = whisper.load_model("small")
+                result = model.transcribe(audio_path, language=language, word_timestamps=True)
+            except Exception:
+                return ""
+            finally:
+                if os.path.exists(audio_path):
+                    try: os.remove(audio_path)
+                    except Exception: pass
+
+            if not result.get('segments'):
+                return ""
+
+            # Construir preset
+            preset = get_preset(style)
+            position = VideoTools._normalize_position(position)
+            ass_overrides = {
+                "alignment": {"top": 8, "center": 5, "bottom": 2}.get(position, 2),
+                "margin_v":  {"top": 40, "center": 80, "bottom": 60}.get(position, 60),
+            }
+            for k, v in overrides.items():
+                if k in ("font_color", "font_family", "font_size", "outline_color", "outline_w", "shadow", "bold", "italic", "margin_v", "alignment"):
+                    target = {"font_color": "primary", "outline_color": "outline"}.get(k, k)
+                    if target in ("primary", "outline", "back") and isinstance(v, str):
+                        v = ass_color(v)
+                    ass_overrides[target] = v
+
+            style_def = build_ass_style(preset, ass_overrides)
+            margin_v = int(ass_overrides.get("margin_v", 60))
+            uppercase = bool(preset.get("uppercase") or overrides.get("uppercase"))
+            karaoke_mode = bool(preset.get("karaoke")) and result.get("segments") and any(
+                seg.get("words") for seg in result["segments"]
+            )
+
+            # Generar ASS
+            ass_path = "_automyx_temp_subs.ass"
+
+            def _fmt(t: float) -> str:
+                h = int(t // 3600); m = int((t % 3600) // 60)
+                s = int(t % 60); cs = int((t % 1) * 100)
+                return f"{h:02}:{m:02}:{s:02}.{cs:02}"
+
+            ass_content = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+{style_def}
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+            for seg in result['segments']:
+                start = _fmt(seg['start'])
+                end = _fmt(seg['end'])
+                text = seg['text'].strip()
+                if uppercase:
+                    text = text.upper()
+                if karaoke_mode and seg.get("words"):
+                    parts = []
+                    for w in seg["words"]:
+                        wd = max(int((w["end"] - w["start"]) * 100), 5)
+                        wt = w["word"].strip()
+                        if uppercase: wt = wt.upper()
+                        parts.append("{{\\k%d}}%s" % (wd, wt))
+                    text = "".join(parts)
+                ass_content += f"Dialogue: 0,{start},{end},Default,,0,0,{margin_v},,{text}\n"
+
+            with open(ass_path, 'w', encoding='utf-8') as f:
+                f.write(ass_content)
+
+            return ass_path
+
+        except Exception:
+            return ""
+    
+    @staticmethod
     def create_tiktok_edit(**kwargs) -> str:
         """[Tool] Edita un vídeo para TikTok."""
         try:
@@ -853,6 +981,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             max_duration_s: truncar a N segundos (0 = sin límite)
             language: idioma para subtítulos ('es','en',...)
         """
+        # Lock por archivo de entrada para evitar ediciones concurrentes
+        lock = _get_video_lock(input_path)
+        lock.acquire()
         try:
             # ---- 0. Resolver paths ----
             if not input_path:
@@ -937,27 +1068,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                         else:
                             log_lines.append(f"   ⚠️ Effect '{eff_l}' falló: {zm_res[:120]}")
 
-            # ---- 5. auto_subtitles (Whisper + burn ASS) ----
-            subtitle_filter = ""
+            # ---- 5. auto_subtitles (Whisper → genera ASS, NO quema aún) ----
+            ass_subtitle_path = None
             if auto_subtitles:
                 try:
-                    # Preparar args para auto_subtitles
-                    sub_args = {
-                        "input_path": current,
-                        "output_path": current.replace(".mp4", "_withsubs.mp4") if current.endswith(".mp4") else current + "_withsubs.mp4",
-                        "language": language,
-                        "style": subtitle_style.get("style", "hype"),
-                        "position": subtitle_style.get("position", "center"),
-                    }
-                    # auto_subtitles usa **kwargs, así que le pasamos los relevantes
-                    sub_res = VideoTools.auto_subtitles(**sub_args)
-                    if "✅" in sub_res or "guardad" in sub_res.lower() or os.path.exists(sub_args["output_path"]):
-                        current = sub_args["output_path"]
-                        log_lines.append("   💬 Subtítulos quemados correctamente")
+                    # Generar ASS sin quemar (nueva función interna)
+                    ass_subtitle_path = VideoTools._generate_ass_subtitles(
+                        input_path=current,
+                        language=language,
+                        style=subtitle_style.get("style", "hype"),
+                        position=subtitle_style.get("position", "center"),
+                        **{k: v for k, v in subtitle_style.items() if k not in ("style", "position")}
+                    )
+                    if ass_subtitle_path and os.path.exists(ass_subtitle_path):
+                        log_lines.append("   💬 Subtítulos generados (ASS), se quemarán en render final")
                     else:
-                        log_lines.append(f"   ⚠️ auto_subtitles no produjo archivo: {sub_res[:200]}")
+                        log_lines.append(f"   ⚠️ No se pudo generar ASS: {ass_subtitle_path}")
+                        ass_subtitle_path = None
                 except Exception as e:
                     log_lines.append(f"   ⚠️ auto_subtitles excepción: {e}")
+                    ass_subtitle_path = None
 
             # ---- 6. intro/outro (concatenar) ----
             if intro_path and os.path.exists(intro_path):
@@ -1026,6 +1156,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     v_filters = [f for f in v_filters if not f.startswith("fade=out:st=9999")]
                     a_filters = [f for f in a_filters if not f.startswith("afade=out:st=9999")]
 
+            # Añadir subtítulos ASS al final (después de scale para que se vean en 9:16)
+            if ass_subtitle_path and os.path.exists(ass_subtitle_path):
+                safe_ass = ass_subtitle_path.replace('\\', '/').replace(':', '\\:')
+                v_filters.append(f"ass={safe_ass}")
+
             # ---- 9. Truncar a max_duration_s si se especificó ----
             t_input_flags = ["-y", "-i", current]
             if max_duration_s and max_duration_s > 0:
@@ -1057,6 +1192,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 for f in tmp_dir.glob("concat_*.txt"):
                     try: f.unlink()
                     except Exception: pass
+                # Limpiar ASS generado
+                if ass_subtitle_path and os.path.exists(ass_subtitle_path):
+                    try: os.remove(ass_subtitle_path)
+                    except Exception: pass
             except Exception:
                 pass
 
@@ -1068,6 +1207,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return f"❌ Timeout (>600s) en edición de {input_path}. El video es demasiado largo o el sistema está sobrecargado."
         except Exception as e:
             return f"❌ Error en advanced_video_editor: {type(e).__name__}: {e}"
+        finally:
+            lock.release()
 
     @staticmethod
     def analyze_video_content(input_path: str) -> str:

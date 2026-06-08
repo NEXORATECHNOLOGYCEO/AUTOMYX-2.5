@@ -10,25 +10,35 @@ import os
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Estado global para el frontend - enriquecido con fases claras
-agent_status = {
-    "is_active": False,
-    "phase": "idle",  # idle | analyzing | thinking | tool_executing | tool_executed | responding | error
-    "current_action": "Esperando tu solicitud...",
-    "reasoning": "",
-    "user_request": "",
-    "step": 0,
-    "total_steps": 0,
-    "tool_name": "",
-    "tool_args_summary": "",
-    "tool_result_summary": "",
-    "tool_result_ok": None,
-    "error_message": "",
-    "started_at": None,
-    "last_update": None,
-    "plan": None,        # Plan nativo del modelo: {"steps": [...], "total": 0, "completed": 0}
-    "flow_phases": [],   # Fases del flow-schema visual
-}
+# Estado thread-local para el frontend - evita race conditions en tareas paralelas
+_agent_status_local = threading.local()
+
+def get_agent_status() -> dict:
+    """Obtiene el estado del thread actual, creando uno nuevo si no existe."""
+    if not hasattr(_agent_status_local, 'status'):
+        _agent_status_local.status = {
+            "is_active": False,
+            "phase": "idle",
+            "current_action": "Esperando tu solicitud...",
+            "reasoning": "",
+            "user_request": "",
+            "step": 0,
+            "total_steps": 0,
+            "tool_name": "",
+            "tool_args_summary": "",
+            "tool_result_summary": "",
+            "tool_result_ok": None,
+            "error_message": "",
+            "started_at": None,
+            "last_update": None,
+            "plan": None,
+            "flow_phases": [],
+        }
+    return _agent_status_local.status
+
+# Alias de compatibilidad - redirige al thread-local
+def agent_status():
+    return get_agent_status()
 
 # Forzar codificación UTF-8 para evitar errores en Windows con emojis
 if sys.stdout.encoding.lower() != 'utf-8':
@@ -95,15 +105,14 @@ def set_progress_callback(cb: Optional[Callable]) -> None:
 
 
 def _set_phase(phase: str, action: str = "", **extras: Any) -> None:
-    """Actualiza el estado global de forma atómica y notifica."""
-    global agent_status
+    """Actualiza el estado thread-local de forma atómica y notifica."""
     with _state_lock:
-        agent_status["phase"] = phase
+        get_agent_status()["phase"] = phase
         if action:
-            agent_status["current_action"] = action
-        agent_status["last_update"] = datetime.now().isoformat()
+            get_agent_status()["current_action"] = action
+        get_agent_status()["last_update"] = datetime.now().isoformat()
         for k, v in extras.items():
-            agent_status[k] = v
+            get_agent_status()[k] = v
     # Log interno
     logger.debug(f"[phase={phase}] {action} | extras={extras}")
     # Callback de progreso (multi-tarea)
@@ -904,8 +913,7 @@ class AutomyxAgent:
         return resolved
 
     def run(self, user_input: str, custom_system_prompt: str = None, agent_skills: dict = None,
-            agent_id: str = "main", progress_callback=None, images: list = None,
-            cancel_check: Optional[Callable[[], bool]] = None) -> str:
+            agent_id: str = "main", progress_callback=None, images: list = None) -> str:
         """Bucle principal del agente con fases claras y comunicación rica.
 
         `images` (opcional): lista de dicts {"data": base64, "mime": "image/png"}.
@@ -1014,19 +1022,18 @@ class AutomyxAgent:
             pass
 
         # ---- FASE 1: ANALYZING (comprender quÃ© pidiÃ³ el usuario) ----
-        global agent_status
-        agent_status["is_active"] = True
-        agent_status["user_request"] = user_input
-        agent_status["started_at"] = datetime.now().isoformat()
-        agent_status["step"] = 0
-        agent_status["total_steps"] = 0
-        agent_status["error_message"] = ""
-        agent_status["tool_name"] = ""
-        agent_status["tool_args_summary"] = ""
-        agent_status["tool_result_summary"] = ""
-        agent_status["tool_result_ok"] = None
-        agent_status["plan"] = None
-        agent_status["flow_phases"] = []
+        get_agent_status()["is_active"] = True
+        get_agent_status()["user_request"] = user_input
+        get_agent_status()["started_at"] = datetime.now().isoformat()
+        get_agent_status()["step"] = 0
+        get_agent_status()["total_steps"] = 0
+        get_agent_status()["error_message"] = ""
+        get_agent_status()["tool_name"] = ""
+        get_agent_status()["tool_args_summary"] = ""
+        get_agent_status()["tool_result_summary"] = ""
+        get_agent_status()["tool_result_ok"] = None
+        get_agent_status()["plan"] = None
+        get_agent_status()["flow_phases"] = []
         _set_phase("analyzing", f"Analizando tu solicitud: \"{user_input[:60]}{'...' if len(user_input) > 60 else ''}\"")
         if progress_callback:
             try: progress_callback("analyzing", f"Analizando: {user_input[:60]}")
@@ -1162,14 +1169,7 @@ class AutomyxAgent:
         # ---- BUCLE PRINCIPAL ----
         max_iterations = 15  # safety net
         for iteration in range(max_iterations):
-            agent_status["step"] = iteration + 1
-
-            # Verificar cancelación (multi-tarea)
-            if cancel_check and cancel_check():
-                if TERMINAL_AVAILABLE and term:
-                    term.warn("Tarea cancelada por el usuario")
-                final_answer = "⏹️ Tarea cancelada."
-                break
+            get_agent_status()["step"] = iteration + 1
 
             # Truncar historial para no explotar
             if len(self.history) > 21:
@@ -1202,7 +1202,7 @@ class AutomyxAgent:
                     delta = chunk.choices[0].delta
                     if hasattr(delta, "reasoning_content") and delta.reasoning_content:
                         reasoning_accumulated += delta.reasoning_content
-                        agent_status["reasoning"] = reasoning_accumulated
+                        get_agent_status()["reasoning"] = reasoning_accumulated
                         # Mostrar razonamiento en vivo si el terminal lo soporta
                         if TERMINAL_AVAILABLE and term and hasattr(term, 'live_reasoning'):
                             try: term.live_reasoning(reasoning_accumulated)
@@ -1232,7 +1232,7 @@ class AutomyxAgent:
                     _set_phase("error", msg, error_message=msg)
                     if TERMINAL_AVAILABLE and term:
                         term.error(msg)
-                    agent_status["is_active"] = False
+                    get_agent_status()["is_active"] = False
                     return msg
 
             self.history.append({"role": "assistant", "content": ai_message})
@@ -1270,7 +1270,7 @@ class AutomyxAgent:
                         "args": args,
                         "rationale": tc.get("rationale", action),
                     })
-                agent_status["plan"] = {"steps": plan_steps, "total": len(plan_steps), "completed": 0}
+                get_agent_status()["plan"] = {"steps": plan_steps, "total": len(plan_steps), "completed": 0}
                 if TERMINAL_AVAILABLE and term:
                     try:
                         groups = self._analyze_parallel_groups(plan_steps)
@@ -1289,8 +1289,8 @@ class AutomyxAgent:
                 else:
                     all_results_msg = "Error ejecutando plan en paralelo."
             else:
-                agent_status["plan"] = None
-                agent_status["flow_phases"] = []
+                get_agent_status()["plan"] = None
+                get_agent_status()["flow_phases"] = []
 
             # ---- FASE 4: EJECUTAR TOOL CALL UNICO (cuando no hay plan multi-paso) ----
             _set_phase("tool_executing", f"Ejecutando {len(tool_calls)} herramienta(s)...")
@@ -1352,9 +1352,9 @@ class AutomyxAgent:
                     narrative += f"{rationale} -> {action}({args_summary})"
                 else:
                     narrative += f"Ejecutando {action}({args_summary})"
-                agent_status["tool_name"] = action
-                agent_status["tool_args_summary"] = args_summary
-                agent_status["reasoning"] = rationale
+                get_agent_status()["tool_name"] = action
+                get_agent_status()["tool_args_summary"] = args_summary
+                get_agent_status()["reasoning"] = rationale
                 _set_phase("tool_executing", narrative,
                           tool_name=action, tool_args_summary=args_summary)
                 if TERMINAL_AVAILABLE and term:
@@ -1362,13 +1362,6 @@ class AutomyxAgent:
                     if rationale:
                         try: term.info(f"Razon: {rationale}")
                         except Exception: pass
-
-                # Verificar cancelación antes de ejecutar tool
-                if cancel_check and cancel_check():
-                    if TERMINAL_AVAILABLE and term:
-                        term.warn("Tarea cancelada durante ejecución de herramientas")
-                    all_results_msg += "\n⏹️ Tarea cancelada."
-                    break
 
                 # 4.4: Ejecutar la tool con medición de tiempo y auto-healing
                 t0 = time.time()
@@ -1474,14 +1467,14 @@ class AutomyxAgent:
                 all_results_msg += result_msg + "\n"
 
                 # Actualizar progreso del plan
-                if agent_status.get("plan"):
-                    agent_status["plan"]["completed"] = idx
-                    if agent_status["flow_phases"] and idx <= len(agent_status["flow_phases"]):
-                        current_flow_id = agent_status["flow_phases"][idx - 1]["id"]
+                if get_agent_status().get("plan"):
+                    get_agent_status()["plan"]["completed"] = idx
+                    if get_agent_status()["flow_phases"] and idx <= len(get_agent_status()["flow_phases"]):
+                        current_flow_id = get_agent_status()["flow_phases"][idx - 1]["id"]
                         if TERMINAL_AVAILABLE and term and idx < len(tool_calls):
                             try:
-                                next_id = agent_status["flow_phases"][idx]["id"] if idx < len(agent_status["flow_phases"]) else ""
-                                term.render_flow_schema(agent_status["flow_phases"],
+                                next_id = get_agent_status()["flow_phases"][idx]["id"] if idx < len(get_agent_status()["flow_phases"]) else ""
+                                term.render_flow_schema(get_agent_status()["flow_phases"],
                                                         current_phase=next_id,
                                                         title=f"Plan paso {idx+1}/{len(tool_calls)}")
                             except Exception:
@@ -1504,9 +1497,9 @@ class AutomyxAgent:
 
         # ---- FASE 6: CIERRE + AUTO-LEARNING ----
         _set_phase("idle", "Listo. Esperando tu siguiente solicitud.")
-        agent_status["is_active"] = False
-        agent_status["step"] = 0
-        agent_status["total_steps"] = 0
+        get_agent_status()["is_active"] = False
+        get_agent_status()["step"] = 0
+        get_agent_status()["total_steps"] = 0
         if TERMINAL_AVAILABLE and term:
             term.success(f"Respuesta final lista ({len(final_answer)} caracteres).")
 

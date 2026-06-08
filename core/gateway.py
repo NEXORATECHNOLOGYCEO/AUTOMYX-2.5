@@ -114,10 +114,10 @@ class AutomyxGateway:
             }
 
         @self.app.get("/api/agent/status")
-        async def agent_status():
+        async def agent_status_endpoint():
             """Estado en tiempo real del agente (para frontend)"""
-            from core.agent import agent_status
-            return agent_status
+            from core.agent import get_agent_status
+            return get_agent_status()
 
         @self.app.get("/api/multitask/stats")
         async def multitask_stats():
