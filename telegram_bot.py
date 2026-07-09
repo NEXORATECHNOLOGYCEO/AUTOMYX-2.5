@@ -112,6 +112,7 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⚡ MiniMax-m2.7 (NVIDIA API)", callback_data="model:minimaxai/minimax-m2.7")],
         [InlineKeyboardButton("🧠 GPT-OSS-120b (NVIDIA API)", callback_data="model:openai/gpt-oss-120b")],
         [InlineKeyboardButton("🌐 GLM-5.1 (NVIDIA API)", callback_data="model:z-ai/glm-5.1")],
+        [InlineKeyboardButton("🔮 Kimi K2.6 (NVIDIA API)", callback_data="model:moonshotai/kimi-k2.6")],
         [InlineKeyboardButton("🔒 Llama 3 (Local Ollama)", callback_data="model:ollama/llama3")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)

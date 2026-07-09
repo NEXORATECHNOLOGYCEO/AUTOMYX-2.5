@@ -10,6 +10,27 @@ import os
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+try:
+    from core.audit import get_audit
+    _AUDIT_AVAILABLE = True
+except Exception:
+    _AUDIT_AVAILABLE = False
+    get_audit = None
+
+try:
+    from core.token_tracker import get_tracker
+    _TRACKER_AVAILABLE = True
+except Exception:
+    _TRACKER_AVAILABLE = False
+    get_tracker = None
+
+try:
+    from core.workspace import get_workspace_manager
+    _WORKSPACE_AVAILABLE = True
+except Exception:
+    _WORKSPACE_AVAILABLE = False
+    get_workspace_manager = None
+
 # Estado thread-local para el frontend - evita race conditions en tareas paralelas
 _agent_status_local = threading.local()
 
@@ -257,83 +278,401 @@ class OllamaManager:
 
 
 
+# ---------------------------------------------------------------------------
+# Wrapper de compatibilidad OpenAI para Anthropic SDK
+# Permite usar client.chat.completions.create() con modelos Claude
+# ---------------------------------------------------------------------------
+class _AnthrChunk:
+    class _Delta:
+        def __init__(self, text):
+            self.content = text
+            self.reasoning_content = None
+    class _Choice:
+        def __init__(self, text):
+            self.delta = _AnthrChunk._Delta(text)
+    def __init__(self, text):
+        self.choices = [self._Choice(text)]
+
+
+class _AnthrMessage:
+    class _MsgObj:
+        def __init__(self, content):
+            self.content = content
+            self.tool_calls = None
+    class _Choice:
+        def __init__(self, content):
+            self.message = _AnthrMessage._MsgObj(content)
+    class _Usage:
+        def __init__(self, prompt=0, completion=0):
+            self.prompt_tokens = prompt
+            self.completion_tokens = completion
+    def __init__(self, content, usage=None):
+        self.choices = [self._Choice(content)]
+        _u = usage or {}
+        self.usage = self._Usage(
+            prompt=_u.get("input_tokens", 0),
+            completion=_u.get("output_tokens", 0),
+        )
+
+
+def _build_anthropic_schemas(tools: dict) -> list:
+    """Genera Anthropic tool schemas (max 64 tools, nombres sanitizados)."""
+    import inspect as _inspect
+    import re as _re
+
+    # Anthropic: nombre válido = ^[a-zA-Z0-9_-]{1,64}$
+    def _safe_name(n: str) -> str:
+        n = _re.sub(r'[^a-zA-Z0-9_\-]', '_', n)
+        return n[:64]
+
+    # Priorizar tools más usadas (limitar a 64 para evitar payloads gigantes)
+    _PRIORITY = [
+        "write_file", "read_file", "create_directory", "list_directory",
+        "execute_cmd", "delete_file", "copy_file", "move_file",
+        "web_search", "web_fetch", "open_browser", "open_program",
+        "open_vscode", "use_terminal_window", "remember_fact", "recall_facts",
+        "glob_file", "search_in_file", "append_to_file", "replace_in_file",
+        "download_file", "compress_files", "extract_zip", "get_clipboard",
+        "set_clipboard", "take_screenshot", "notion_create_page",
+        "github_create_repo", "send_telegram_message", "send_discord_message",
+    ]
+    _ordered = [t for t in _PRIORITY if t in tools]
+    _ordered += [t for t in tools if t not in set(_ordered)]
+    _ordered = _ordered[:64]
+
+    schemas = []
+    for name in _ordered:
+        func = tools[name]
+        safe = _safe_name(name)
+        try:
+            sig = _inspect.signature(func)
+            props = {}
+            required = []
+            for pname, param in sig.parameters.items():
+                if pname in ("self", "kwargs", "args"):
+                    continue
+                ann = param.annotation
+                if ann == int:
+                    ptype = "integer"
+                elif ann == bool:
+                    ptype = "boolean"
+                elif ann in (list,):
+                    ptype = "array"
+                else:
+                    ptype = "string"
+                props[_safe_name(pname)] = {"type": ptype, "description": pname}
+                if param.default is _inspect.Parameter.empty:
+                    required.append(_safe_name(pname))
+        except Exception:
+            props = {}
+            required = []
+        doc = ((func.__doc__ or "").strip().split("\n")[0])[:200] or f"Tool: {name}"
+        schemas.append({
+            "name": safe,
+            "description": doc[:200],
+            "input_schema": {
+                "type": "object",
+                "properties": props,
+                "required": required,
+            },
+        })
+    return schemas
+
+
+class _AnthrCompletions:
+    def __init__(self, ac):
+        self._ac = ac
+        self._schemas = None  # set by agent before calling
+
+    def _clean_messages(self, messages):
+        """Convierte history de Automyx al formato Anthropic."""
+        system_parts = []
+        conv = []
+        for m in messages:
+            role = m.get("role", "")
+            content = m.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    c.get("text", "") if isinstance(c, dict) else str(c)
+                    for c in content
+                )
+            if role == "system":
+                system_parts.append(content)
+            elif role in ("user", "assistant"):
+                conv.append({"role": role, "content": content or " "})
+
+        # Anthropic requiere roles alternados empezando con user
+        cleaned = []
+        last_role = None
+        for m in conv:
+            if m["role"] == last_role:
+                cleaned[-1]["content"] += "\n" + m["content"]
+            else:
+                cleaned.append({"role": m["role"], "content": m["content"]})
+                last_role = m["role"]
+        if not cleaned or cleaned[0]["role"] != "user":
+            cleaned.insert(0, {"role": "user", "content": "Continúa."})
+
+        # Anthropic rechaza assistant content con trailing whitespace
+        for msg in cleaned:
+            if msg["role"] == "assistant":
+                msg["content"] = (msg["content"] or "").rstrip() or "OK"
+
+        return system_parts, cleaned
+
+    def create(self, model, messages, stream=False, max_tokens=4096,
+               temperature=0.7, top_p=0.95, timeout=120, **kw):
+
+        system_parts, cleaned = self._clean_messages(messages)
+
+        kwargs = {
+            "model": model,
+            "messages": cleaned,
+            "max_tokens": max(max_tokens, 1),
+            "temperature": min(max(float(temperature), 0.0), 1.0),
+        }
+        if system_parts:
+            kwargs["system"] = "\n".join(system_parts)
+
+        # ── Native tool_use (previene planes JSON) ───────────────────────
+        schemas = self._schemas
+        if schemas:
+            kwargs["tools"] = schemas
+            kwargs["tool_choice"] = {"type": "auto"}
+
+        if stream:
+            resp = self._ac.messages.create(stream=True, **kwargs)
+
+            def _gen():
+                try:
+                    _pending_tool = {}  # {id: {name, buf}}
+                    _active_id = [None]
+                    for chunk in resp:
+                        t = getattr(chunk, "type", "")
+
+                        if t == "content_block_start":
+                            blk = getattr(chunk, "content_block", None)
+                            if blk and getattr(blk, "type", "") == "tool_use":
+                                bid = getattr(blk, "id", "") or "t0"
+                                _pending_tool[bid] = {"name": getattr(blk, "name", ""), "buf": ""}
+                                _active_id[0] = bid
+
+                        elif t == "content_block_delta":
+                            delta = getattr(chunk, "delta", None)
+                            if not delta:
+                                continue
+                            dtype = getattr(delta, "type", "")
+                            if dtype == "text_delta":
+                                text = getattr(delta, "text", "") or ""
+                                if text:
+                                    yield _AnthrChunk(text)
+                            elif dtype == "input_json_delta":
+                                bid = _active_id[0]
+                                if bid and bid in _pending_tool:
+                                    _pending_tool[bid]["buf"] += getattr(delta, "partial_json", "") or ""
+
+                        elif t == "content_block_stop":
+                            bid = _active_id[0]
+                            if bid and bid in _pending_tool:
+                                tc = _pending_tool.pop(bid)
+                                if tc["name"]:
+                                    try:
+                                        args = json.loads(tc["buf"]) if tc["buf"] else {}
+                                    except Exception:
+                                        args = {}
+                                    tool_json = json.dumps({"action": tc["name"], "args": args})
+                                    yield _AnthrChunk(f"\n{tool_json}")
+                                _active_id[0] = None
+                except Exception:
+                    pass
+            return _gen()
+        else:
+            resp = self._ac.messages.create(**kwargs)
+            parts = []
+            for blk in getattr(resp, "content", []) or []:
+                btype = getattr(blk, "type", "")
+                if btype == "text":
+                    text = getattr(blk, "text", "") or ""
+                    if text:
+                        parts.append(text)
+                elif btype == "tool_use":
+                    args = getattr(blk, "input", {}) or {}
+                    tool_json = json.dumps({"action": blk.name, "args": args})
+                    parts.append(f"\n{tool_json}")
+            # Propagar usage real para token tracking
+            _usage = getattr(resp, "usage", None)
+            usage_dict = {}
+            if _usage:
+                usage_dict = {
+                    "input_tokens":  getattr(_usage, "input_tokens",  0),
+                    "output_tokens": getattr(_usage, "output_tokens", 0),
+                }
+            return _AnthrMessage("\n".join(parts), usage=usage_dict)
+
+
+class _AnthrCompatClient:
+    """Cliente compatible con OpenAI API para modelos Anthropic."""
+    def __init__(self, api_key: str):
+        import anthropic as _anth
+        _ac = _anth.Anthropic(api_key=api_key)
+        self.chat = type("_C", (), {})()
+        self.chat.completions = _AnthrCompletions(_ac)
+
+    def set_tool_schemas(self, tools: dict):
+        """Registra los schemas de tools para usar native tool_use."""
+        try:
+            self.chat.completions._schemas = _build_anthropic_schemas(tools)
+        except Exception:
+            pass
+
+
 class ModelProvider:
-    """Clase para gestionar diferentes proveedores de modelos"""
+    """Gestiona diferentes proveedores de modelos."""
     OLLAMA_LOCAL = "ollama_local"
     OLLAMA_CLOUD = "ollama_cloud"
-    NVIDIA = "nvidia"
-    OPENAI = "openai"
-    
+    NVIDIA      = "nvidia"
+    OPENAI      = "openai"
+    ANTHROPIC   = "anthropic"
+    GOOGLE      = "google"
+    XAI         = "xai"
+    MISTRAL_AI  = "mistral"
+    DEEPSEEK    = "deepseek"
+
     @staticmethod
     def get_provider(model_name: str) -> str:
-        """Determina el proveedor basado en el nombre del modelo"""
-        model_lower = model_name.lower()
-        
+        ml = model_name.lower()
+        # Prefijos explícitos Ollama
         if model_name.startswith("ollama/"):
             return ModelProvider.OLLAMA_LOCAL
-        elif model_name.startswith("cloud/"):
+        if model_name.startswith("cloud/"):
             return ModelProvider.OLLAMA_CLOUD
-        elif model_name.startswith("nvidia/") or model_name.startswith("openai/") or model_name.startswith("z-ai/") or model_name.startswith("minimaxai/") or "gpt-oss" in model_lower:
-            return ModelProvider.NVIDIA
-        elif "llama" in model_lower or "mistral" in model_lower:
+        # Modelos locales Ollama (sin prefijo)
+        if ":" in model_name and not "/" in model_name:
             return ModelProvider.OLLAMA_LOCAL
-        
-        # Por defecto, usar NVIDIA
+        # NVIDIA NIM (prefijos de sus rutas)
+        if (model_name.startswith("nvidia/") or model_name.startswith("openai/")
+                or model_name.startswith("z-ai/") or model_name.startswith("minimaxai/")
+                or model_name.startswith("moonshotai/") or model_name.startswith("meta/")
+                or model_name.startswith("mistralai/") or "gpt-oss" in ml):
+            return ModelProvider.NVIDIA
+        # Anthropic
+        if ml.startswith("claude"):
+            return ModelProvider.ANTHROPIC
+        # OpenAI
+        if ml.startswith("gpt-") or ml.startswith("o1") or ml.startswith("o3") or ml.startswith("o4"):
+            return ModelProvider.OPENAI
+        # Google Gemini
+        if ml.startswith("gemini"):
+            return ModelProvider.GOOGLE
+        # xAI
+        if ml.startswith("grok"):
+            return ModelProvider.XAI
+        # Mistral (directo, no via NVIDIA)
+        if ml.startswith("mistral-") or ml.startswith("codestral"):
+            return ModelProvider.MISTRAL_AI
+        # DeepSeek
+        if ml.startswith("deepseek"):
+            return ModelProvider.DEEPSEEK
+        # Ollama (nombres sin prefijo ni slash)
+        if any(x in ml for x in ("llama", "phi", "qwen", "gemma", "codellama")):
+            return ModelProvider.OLLAMA_LOCAL
+        # Fallback: NVIDIA
         return ModelProvider.NVIDIA
-    
+
     @staticmethod
     def get_client(model_name: str, provider: str = None):
-        """Obtiene el cliente adecuado para el proveedor"""
         if provider is None:
             provider = ModelProvider.get_provider(model_name)
-        
+
         if provider == ModelProvider.OLLAMA_LOCAL:
-            logger.info("Usando motor de inferencia local (Ollama)")
-            return OpenAI(
-                base_url="http://localhost:11434/v1",
-                api_key="local-ollama"
-            )
-        elif provider == ModelProvider.OLLAMA_CLOUD:
-            logger.info("Usando Ollama Cloud")
+            return OpenAI(base_url="http://localhost:11434/v1", api_key="local-ollama")
+
+        if provider == ModelProvider.OLLAMA_CLOUD:
             return OpenAI(
                 base_url="https://ollama.com/v1",
-                api_key=os.getenv("OLLAMA_API_KEY", "ollama-cloud-key")
+                api_key=os.getenv("OLLAMA_API_KEY", "ollama-cloud-key"),
             )
-        elif provider == ModelProvider.NVIDIA:
-            logger.info("Usando NVIDIA API")
+
+        if provider == ModelProvider.ANTHROPIC:
+            api_key = os.getenv("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                logger.warning("ANTHROPIC_API_KEY no configurada")
+            try:
+                return _AnthrCompatClient(api_key)
+            except ImportError:
+                logger.warning("anthropic SDK no instalado, usando NVIDIA como fallback")
+
+        if provider == ModelProvider.OPENAI:
+            api_key = os.getenv("OPENAI_API_KEY", "")
+            if not api_key:
+                logger.warning("OPENAI_API_KEY no configurada")
+            return OpenAI(api_key=api_key or "missing-key")
+
+        if provider == ModelProvider.GOOGLE:
+            api_key = os.getenv("GOOGLE_API_KEY", "")
+            if not api_key:
+                logger.warning("GOOGLE_API_KEY no configurada")
+            return OpenAI(
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                api_key=api_key or "missing-key",
+            )
+
+        if provider == ModelProvider.XAI:
+            api_key = os.getenv("XAI_API_KEY", "")
+            if not api_key:
+                logger.warning("XAI_API_KEY no configurada")
+            return OpenAI(base_url="https://api.x.ai/v1", api_key=api_key or "missing-key")
+
+        if provider == ModelProvider.MISTRAL_AI:
+            api_key = os.getenv("MISTRAL_API_KEY", "")
+            if not api_key:
+                logger.warning("MISTRAL_API_KEY no configurada")
+            return OpenAI(base_url="https://api.mistral.ai/v1", api_key=api_key or "missing-key")
+
+        if provider == ModelProvider.DEEPSEEK:
+            api_key = os.getenv("DEEPSEEK_API_KEY", "")
+            if not api_key:
+                logger.warning("DEEPSEEK_API_KEY no configurada")
+            return OpenAI(base_url="https://api.deepseek.com/v1", api_key=api_key or "missing-key")
+
+        if provider == ModelProvider.NVIDIA:
             api_key = os.getenv("NVIDIA_API_KEY", "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")
-            return OpenAI(
-                base_url="https://integrate.api.nvidia.com/v1",
-                api_key=api_key
-            )
-        elif provider == ModelProvider.OPENAI:
-            logger.info("Usando OpenAI API")
-            return OpenAI(
-                api_key="your-openai-api-key"
-            )
-        
-        # Fallback
+            try:
+                from core.speed import get_optimized_http_client
+                http_client = get_optimized_http_client("https://integrate.api.nvidia.com/v1", api_key)
+                if http_client is not None:
+                    return OpenAI(
+                        base_url="https://integrate.api.nvidia.com/v1",
+                        api_key=api_key,
+                        http_client=http_client,
+                    )
+            except Exception:
+                pass
+            return OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=api_key)
+
+        # Fallback NVIDIA
         api_key = os.getenv("NVIDIA_API_KEY", "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")
-        return OpenAI(
-            base_url="https://integrate.api.nvidia.com/v1",
-            api_key=api_key
-        )
-    
+        return OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=api_key)
+
     @staticmethod
     def get_display_name(model_name: str) -> str:
-        """Obtiene el nombre del modelo sin el prefijo del proveedor (excepto para NVIDIA/openai)"""
         if model_name.startswith("ollama/"):
             return model_name.replace("ollama/", "")
         if model_name.startswith("cloud/"):
             return model_name.replace("cloud/", "")
-        # Para NVIDIA, openai, z-ai, y minimaxai DEJAMOS el prefijo (API de NVIDIA lo requiere)
-        if model_name.startswith("nvidia/") or model_name.startswith("openai/") or model_name.startswith("z-ai/") or model_name.startswith("minimaxai/"):
+        # NVIDIA: mantener prefijo (la API lo requiere)
+        if (model_name.startswith("nvidia/") or model_name.startswith("openai/")
+                or model_name.startswith("z-ai/") or model_name.startswith("minimaxai/")
+                or model_name.startswith("moonshotai/") or model_name.startswith("meta/")
+                or model_name.startswith("mistralai/")):
             return model_name
         return model_name
 
 
 class AutomyxAgent:
-    def __init__(self, model_name: str = "openai/gpt-oss-120b", provider: str = None):
+    def __init__(self, model_name: str = "", provider: str = None):
+        if not model_name:
+            model_name = os.environ.get("AUTOMYX_MODEL", "openai/gpt-oss-120b")
         self.model_name = model_name
         self.provider = provider or ModelProvider.get_provider(model_name)
         self.hw = hw_config
@@ -344,20 +683,70 @@ class AutomyxAgent:
         self.client = ModelProvider.get_client(model_name, self.provider)
         logger.info(f"Proveedor: {self.provider} | Modelo: {ModelProvider.get_display_name(model_name)}")
         
-        # Cargar el Soul base desde Soul.md
+        # Cargar el Soul base desde Soul.md (OPTIMIZADO: solo una vez, cacheado)
         try:
             import os
             soul_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Soul.md")
             with open(soul_path, "r", encoding="utf-8") as f:
-                self.system_prompt = f.read()
+                soul_text = f.read()
         except Exception as e:
             logger.warning(f"No se pudo cargar Soul.md, usando prompt por defecto. Error: {e}")
-            self.system_prompt = "Eres Automyx. Debes usar JSON para las herramientas."
-            
+            soul_text = "Eres Automyx. Debes usar JSON para las herramientas."
+
+        # OPTIMIZACION: prompt compacto para fast_mode (modelos M3/M2.7)
+        # Reduce el system prompt de ~13K tokens a ~2K para velocidad maxima
+        try:
+            from core.model_config import get_model_config
+            _mc = get_model_config(model_name)
+            self._fast_mode = _mc.get("fast_mode", False)
+        except Exception:
+            self._fast_mode = False
+
+        if self._fast_mode:
+            self.system_prompt = (
+                "Eres Automyx, agente IA autonomo local. Responde SIEMPRE en espanol.\n\n"
+                "REGLA #1 — HERRAMIENTAS (CRITICA, SIN EXCEPCIONES):\n"
+                "Cuando necesites hacer algo concreto (crear archivo, ejecutar comando, leer, escribir, buscar):\n"
+                "- Responde UNICAMENTE con el JSON, NADA MAS. Cero texto antes ni despues.\n"
+                "- Formato exacto: {\"action\": \"nombre_tool\", \"args\": {\"param\": \"valor\"}}\n"
+                "- Si necesitas escribir un archivo con contenido largo, pon TODO el contenido en args.content.\n"
+                "- NO escribas 'Voy a...', 'Claro!', 'Te lo dejo...' ni ningun texto antes del JSON.\n"
+                "- El JSON debe estar SOLO en tu respuesta, sin ningun otro caracter.\n\n"
+                "REGLA #2 — RESPUESTA FINAL:\n"
+                "Solo DESPUES de ejecutar TODAS las herramientas necesarias, escribe texto plano resumiendo lo hecho.\n"
+                "Esa respuesta final NO debe contener JSON.\n\n"
+                "REGLA #3 — SIN BUCLES:\n"
+                "Maximo 3-4 herramientas por tarea. Cuando hayas escrito todos los archivos, da la respuesta final.\n\n"
+                "REGLA #4 — CONTENIDO COMPLETO:\n"
+                "Cuando escribas HTML/CSS/JS, el contenido debe ser COMPLETO y profesional en args.content.\n"
+                "Nunca pongas placeholders ni '...' en el contenido real de archivos.\n\n"
+                "REGLA #5 — execute_cmd CON SERVIDORES:\n"
+                "Para node server.js, python app.py, npm start, flask run, uvicorn: SIEMPRE agrega 'background': true.\n"
+                "NUNCA encadenes npm install && node server.js: hazlo en 2 llamadas separadas.\n"
+                "NUNCA digas 'inicia el servidor manualmente' — TU lo inicias con background:true.\n\n"
+                "Tools: read_file, write_file, list_directory, execute_cmd, create_directory, web_search, remember_fact."
+            )
+        else:
+            # Prompt completo para modelos grandes
+            self.system_prompt = soul_text
+            # Append enhanced communication rules for 100% task completion
+            try:
+                from core.model_config import ENHANCED_SYSTEM_PROMPT_ADDITION
+                self.system_prompt = self.system_prompt + "\n" + ENHANCED_SYSTEM_PROMPT_ADDITION
+            except Exception as e:
+                logger.debug(f"Could not append enhanced system prompt: {e}")
+
         self.history = [{"role": "system", "content": self.system_prompt}]
         self.tools: Dict[str, Callable] = {}
         self._tool_requires: Dict[str, list] = {}
         self._conversation_count = 0
+
+        # OPTIMIZACION: pre-warm de recursos en background
+        try:
+            from core.speed import init_speed_optimizations
+            init_speed_optimizations(model_name)
+        except Exception:
+            pass
 
     def update_model(self, model_name: str):
         """Actualiza el modelo, proveedor y cliente en caliente."""
@@ -371,6 +760,25 @@ class AutomyxAgent:
         """Reinicia el historial de conversación, conservando solo el prompt base."""
         self.history = [{"role": "system", "content": self.system_prompt}]
         return "Memoria borrada."
+
+    def load_conversation_history(self, messages: list):
+        """Restaura el historial LLM previo despues del system prompt."""
+        if not messages:
+            return
+        system_msg = self.history[0] if self.history else {"role": "system", "content": self.system_prompt}
+        self.history = [system_msg]
+        for msg in messages:
+            if msg.get("role") in ("user", "assistant"):
+                self.history.append(msg)
+
+    def inject_memory_context(self, facts_context: str):
+        """Inyecta el contexto de memoria en el system prompt existente."""
+        if not facts_context or not self.history:
+            return
+        if self.history[0]["role"] == "system":
+            base = self.history[0]["content"]
+            if "[MEMORIA PERSISTENTE" not in base:
+                self.history[0]["content"] = base + f"\n\n{facts_context}"
 
     def register_tool(self, name: str, func: Callable, requires: Optional[list] = None):
         """Register a tool. Optionally declare pip deps via `requires=['whisper', 'torch']`.
@@ -391,21 +799,27 @@ class AutomyxAgent:
         Retorna lista de dicts {action, args} compatible con el codigo existente.
         """
         # === CAPA 0: Detectar plan JSON con steps y convertirlo ===
+        # Soporta JSON válido, JSON malformado, y extracción de pasos individuales
         try:
-            _detected_plan = None
-            # Buscar cualquier JSON que tenga plan_id y steps
-            for _maybe_json in re.finditer(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL | re.IGNORECASE):
+            _plan_steps = None
+
+            # 0a. Buscar en code fences primero (más confiable)
+            for fence_m in re.finditer(r'```(?:json)?\s*([\s\S]*?)```', response_text, re.IGNORECASE):
+                candidate = fence_m.group(1).strip()
+                if '"steps"' not in candidate and '"plan_id"' not in candidate:
+                    continue
                 try:
-                    _parsed = json.loads(_maybe_json.group(1))
-                    if isinstance(_parsed, dict) and "steps" in _parsed and isinstance(_parsed["steps"], list):
-                        _detected_plan = _parsed
+                    candidate_clean = re.sub(r',\s*([\]}])', r'\1', candidate)
+                    _p = json.loads(candidate_clean)
+                    if isinstance(_p, dict) and "steps" in _p and isinstance(_p["steps"], list):
+                        _plan_steps = _p["steps"]
                         break
                 except json.JSONDecodeError:
                     pass
-            if not _detected_plan:
-                # Buscar sin fences tambien
-                _depth = 0
-                _start = -1
+
+            # 0b. Intentar balanced-brace parse (JSON sin fence)
+            if _plan_steps is None and ('"plan_id"' in response_text or '"steps"' in response_text):
+                _depth = 0; _start = -1
                 for _i, _c in enumerate(response_text):
                     if _c == '{':
                         if _depth == 0: _start = _i
@@ -413,28 +827,45 @@ class AutomyxAgent:
                     elif _c == '}':
                         _depth -= 1
                         if _depth == 0 and _start != -1:
+                            json_str = re.sub(r',\s*([\]}])', r'\1', response_text[_start:_i+1])
                             try:
-                                _p = json.loads(response_text[_start:_i+1])
+                                _p = json.loads(json_str)
                                 if isinstance(_p, dict) and "steps" in _p and isinstance(_p["steps"], list):
-                                    _detected_plan = _p
+                                    _plan_steps = _p["steps"]
                                     break
                             except json.JSONDecodeError:
                                 pass
                             _start = -1
-            if _detected_plan:
+
+            # 0c. Fallback: extraer pasos individuales con regex
+            # Soporta JSON truncado / malformado con contenido embebido grande
+            if _plan_steps is None and '"tool"' in response_text and '"args"' in response_text:
+                _plan_steps = []
+                # Buscar patrones "tool": "name", "args": {…}
+                for step_m in re.finditer(
+                    r'"tool"\s*:\s*"([^"]+)"[^}]{0,200}"args"\s*:\s*(\{(?:[^{}]|\{[^{}]*\})*\})',
+                    response_text, re.DOTALL
+                ):
+                    tool_nm = step_m.group(1)
+                    args_raw = re.sub(r',\s*([\]}])', r'\1', step_m.group(2))
+                    try:
+                        args_obj = json.loads(args_raw)
+                    except json.JSONDecodeError:
+                        args_obj = {}
+                    _plan_steps.append({"tool": tool_nm, "args": args_obj})
+
+            if _plan_steps:
                 tool_calls_from_plan = []
-                for _step in _detected_plan["steps"]:
-                    tc = {
-                        "action": _step.get("tool") or _step.get("action", ""),
-                        "args": _step.get("args", {}),
-                        "rationale": _step.get("rationale", ""),
-                    }
-                    if tc["action"]:
-                        tool_calls_from_plan.append(tc)
+                for _step in _plan_steps:
+                    action = _step.get("tool") or _step.get("action", "")
+                    if action:
+                        tool_calls_from_plan.append({
+                            "action": action,
+                            "args": _step.get("args", {}),
+                            "rationale": _step.get("rationale", ""),
+                        })
                 if tool_calls_from_plan:
-                    logger.info(f"[plan] Plan JSON detectado con {len(tool_calls_from_plan)} pasos")
-                    # Guardar el plan original completo
-                    _detected_plan["_from_llm"] = True
+                    logger.info(f"[plan] Plan detectado: {len(tool_calls_from_plan)} pasos")
                     return tool_calls_from_plan
         except Exception:
             pass
@@ -448,7 +879,26 @@ class AutomyxAgent:
                 if result.warnings:
                     for w in result.warnings[:3]:
                         logger.warning(f"[json_protocol] {w}")
-                return [tc.to_dict() for tc in result.tool_calls]
+                
+                # Check if json_protocol parsed a single plan object instead of multiple tools
+                parsed_tools = [tc.to_dict() for tc in result.tool_calls]
+                if len(parsed_tools) == 1 and "plan_id" in parsed_tools[0].get("args", {}):
+                    # It parsed the whole plan as one tool call with args containing the steps
+                    args = parsed_tools[0].get("args", {})
+                    if "steps" in args and isinstance(args["steps"], list):
+                        tool_calls_from_plan = []
+                        for _step in args["steps"]:
+                            tc = {
+                                "action": _step.get("tool") or _step.get("action", ""),
+                                "args": _step.get("args", {}),
+                                "rationale": _step.get("rationale", ""),
+                            }
+                            if tc["action"]:
+                                tool_calls_from_plan.append(tc)
+                        if tool_calls_from_plan:
+                            return tool_calls_from_plan
+                            
+                return parsed_tools
             except Exception as e:
                 logger.error(f"[json_protocol] error, fallback a parser legacy: {e}")
 
@@ -457,7 +907,21 @@ class AutomyxAgent:
         matches = re.finditer(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL | re.IGNORECASE)
         for match in matches:
             try:
-                tool_calls.append(json.loads(match.group(1)))
+                json_str = match.group(1)
+                json_str = re.sub(r',\s*([\]}])', r'\1', json_str)
+                parsed = json.loads(json_str)
+                # Ensure we handle plan inside fallback
+                if isinstance(parsed, dict) and "steps" in parsed and "plan_id" in parsed:
+                    for _step in parsed["steps"]:
+                        tc = {
+                            "action": _step.get("tool") or _step.get("action", ""),
+                            "args": _step.get("args", {}),
+                            "rationale": _step.get("rationale", ""),
+                        }
+                        if tc["action"]:
+                            tool_calls.append(tc)
+                else:
+                    tool_calls.append(parsed)
             except json.JSONDecodeError:
                 pass
         if tool_calls:
@@ -473,9 +937,21 @@ class AutomyxAgent:
                 depth -= 1
                 if depth == 0 and start_idx != -1:
                     json_str = response_text[start_idx:i+1]
-                    if '"action"' in json_str:
+                    if '"action"' in json_str or '"tool"' in json_str or '"plan_id"' in json_str:
                         try:
-                            tool_calls.append(json.loads(json_str))
+                            json_str = re.sub(r',\s*([\]}])', r'\1', json_str)
+                            parsed = json.loads(json_str)
+                            if isinstance(parsed, dict) and "steps" in parsed and "plan_id" in parsed:
+                                for _step in parsed["steps"]:
+                                    tc = {
+                                        "action": _step.get("tool") or _step.get("action", ""),
+                                        "args": _step.get("args", {}),
+                                        "rationale": _step.get("rationale", ""),
+                                    }
+                                    if tc["action"]:
+                                        tool_calls.append(tc)
+                            else:
+                                tool_calls.append(parsed)
                         except json.JSONDecodeError:
                             pass
                     start_idx = -1
@@ -660,37 +1136,7 @@ class AutomyxAgent:
         """Muestra al usuario QUÉ entendió el agente de su solicitud."""
         if not TERMINAL_AVAILABLE or term is None:
             return
-        # Mostrar siempre un resumen claro
         term.info(f"Solicitud recibida: \"{user_input[:120]}{'...' if len(user_input) > 120 else ''}\"")
-
-        # 1) Intentar con el motor de intents v2.5 (slang, typos, frases coloquiales)
-        intent_summary = None
-        try:
-            from core.intent_engine import understand
-            understanding = understand(user_input)
-            if understanding["intent"] != "unknown" and understanding["intent_confidence"] > 0.0:
-                verb = understanding["intent"].replace("_", " ")
-                conf = understanding["intent_confidence"]
-                intent_summary = f"Interpretado como: {verb} (confianza {conf:.0%})"
-                if understanding.get("entities", {}).get("folders"):
-                    intent_summary += f" → {', '.join(understanding['entities']['folders'])}"
-                if understanding.get("entities", {}).get("apps"):
-                    intent_summary += f" → apps: {', '.join(understanding['entities']['apps'][:3])}"
-        except Exception:
-            understanding = None
-
-        # 2) Intent summary from understanding (no TaskCoordinator needed)
-        if not intent_summary and understanding:
-            verb = understanding.get("intent", "procesar").replace("_", " ")
-            entities = understanding.get("entities", {})
-            intent_summary = f"🎯 {verb.capitalize()}"
-            if entities.get("folders"):
-                intent_summary += f" en {entities['folders'][0]}"
-            if entities.get("apps"):
-                intent_summary += f" → {entities['apps'][0]}"
-
-        if intent_summary:
-            term.info(intent_summary)
 
     # Tools que NO se pueden paralelizar (efectos secundarios)
     SERIAL_TOOLS: set = {
@@ -753,37 +1199,81 @@ class AutomyxAgent:
 
         return groups
 
+    TOOL_ALTERNATIVES: dict = {
+        "read_file":        ["read_text_file", "get_file", "open_file", "cat_file"],
+        "write_file":       ["save_file", "create_file", "write_text", "put_file"],
+        "list_directory":   ["list_files", "list_dir", "ls", "dir_list"],
+        "execute_cmd":      ["run_command", "shell_exec", "bash_cmd", "run_shell"],
+        "web_search":       ["search_web", "search", "google_search", "brave_search"],
+        "create_directory": ["mkdir", "make_dir", "create_dir"],
+        "delete_file":      ["remove_file", "rm_file", "unlink_file"],
+        "copy_file":        ["cp_file", "duplicate_file", "file_copy"],
+        "move_file":        ["mv_file", "rename_file", "file_move"],
+        "screenshot":       ["take_screenshot", "capture_screen", "screen_capture"],
+    }
+
+    def _try_run_tool(self, tool_name: str, resolved_args: dict):
+        """Intenta ejecutar una herramienta con SmartRetry de 3 niveles."""
+        import os as _os
+
+        # Nivel 1: herramienta exacta
+        if tool_name in self.tools:
+            return self.tools[tool_name](**resolved_args), tool_name
+
+        # Nivel 2: alternativas por nombre
+        for alt in self.TOOL_ALTERNATIVES.get(tool_name, []):
+            if alt in self.tools:
+                try:
+                    return self.tools[alt](**resolved_args), alt
+                except Exception:
+                    pass
+
+        # Nivel 3: fallback via execute_cmd para ops de archivo/directorio
+        if "execute_cmd" in self.tools:
+            path = resolved_args.get("path", resolved_args.get("file_path", "."))
+            if tool_name == "list_directory":
+                cmd = f'dir "{path}"' if _os.name == "nt" else f'ls -la "{path}"'
+                result = self.tools["execute_cmd"](command=cmd)
+                return result, "execute_cmd[list_directory]"
+            if tool_name == "read_file":
+                cmd = f'type "{path}"' if _os.name == "nt" else f'cat "{path}"'
+                result = self.tools["execute_cmd"](command=cmd)
+                return result, "execute_cmd[read_file]"
+
+        available = sorted(self.tools.keys())[:10]
+        raise ValueError(
+            f"Tool '{tool_name}' no disponible. "
+            f"Tools registradas ({len(self.tools)}): {available}"
+        )
+
     def _execute_step(self, step: dict, step_num: int, total: int,
                        plan: dict, progress_callback=None) -> dict:
-        """Ejecuta un paso individual del plan. Usado por workers paralelos."""
-        tool_name = step.get("tool")
+        """Ejecuta un paso con SmartRetry de 3 niveles. Usado por workers paralelos."""
+        tool_name = step.get("tool") or step.get("action", "")
         args = step.get("args", {})
         rationale = step.get("rationale", "")
 
         step_msg = f"[Paso {step_num}/{total}] {rationale or tool_name}"
-        _set_phase("tool_executing", step_msg, tool_name=tool_name)
-        if progress_callback:
-            try: progress_callback("tool_executing", step_msg, step=step_num, tool_name=tool_name)
-            except Exception: pass
+        _set_phase("tool_executing", step_msg, tool_name=tool_name,
+                   rationale=rationale, tool_args_summary=str(args)[:80],
+                   step=step_num, total=total)
 
         resolved_args = self._resolve_step_args(args, plan)
-
         t0 = time.time()
+
         try:
-            result = self.tools[tool_name](**resolved_args)
+            result, used_tool = self._try_run_tool(tool_name, resolved_args)
             duration = int((time.time() - t0) * 1000)
-            if progress_callback:
-                try: progress_callback("tool_executed", f"Paso {step_num} OK ({duration}ms)",
-                                        step=step_num, tool_name=tool_name)
-                except Exception: pass
-            return {"step": step_num, "tool": tool_name, "ok": True, "result": result, "duration_ms": duration}
+            _set_phase("tool_executed", f"OK ({duration}ms)",
+                       step=step_num, total=total, tool_name=used_tool, duration_ms=duration)
+            return {"step": step_num, "tool": used_tool, "ok": True,
+                    "result": result, "duration_ms": duration}
         except Exception as e:
             duration = int((time.time() - t0) * 1000)
             err = f"Error en paso {step_num} ({tool_name}): {e}"
-            if progress_callback:
-                try: progress_callback("error", err, step=step_num, tool_name=tool_name)
-                except Exception: pass
-            return {"step": step_num, "tool": tool_name, "ok": False, "error": str(e), "duration_ms": duration}
+            _set_phase("error", err, step=step_num, total=total, tool_name=tool_name)
+            return {"step": step_num, "tool": tool_name, "ok": False,
+                    "error": str(e), "duration_ms": duration}
 
     def _execute_plan_parallel(self, plan: dict, progress_callback=None) -> Optional[str]:
         """Ejecuta un plan con paralelizacion inteligente de pasos independientes."""
@@ -796,59 +1286,46 @@ class AutomyxAgent:
         # 1. Analizar grupos de paralelizacion
         groups = self._analyze_parallel_groups(steps)
 
-        if TERMINAL_AVAILABLE and term:
-            n_parallel = sum(1 for g in groups if g["parallel"])
-            plan_id = plan.get("plan_id", "plan")
-            term.info(f"Plan {plan_id}: {total} pasos en {len(groups)} grupo(s) ({n_parallel} paralelos)")
-            try:
-                term.render_parallel_groups(groups, title=f"Plan {plan_id}")
-            except Exception:
-                pass
-
         results = []
         global_step_counter = [0]
 
-        # 2. Ejecutar grupos secuencialmente, pasos dentro de grupo en paralelo
-        for g_idx, group in enumerate(groups):
-            g_steps = group["steps"]
-            is_parallel = group["parallel"]
-
-            group_label = f"Grupo {g_idx+1}/{len(groups)}"
-            if is_parallel:
-                if TERMINAL_AVAILABLE and term:
-                    term.info(f"{group_label}: {len(g_steps)} pasos en PARALELO ⚡")
-            else:
-                pass  # secuencial, se muestra normal
-
-            if is_parallel:
-                # Ejecutar todos los pasos del grupo en paralelo
-                step_futures = {}
-                with ThreadPoolExecutor(max_workers=min(len(g_steps), 8)) as executor:
+        try:
+            # 2. Ejecutar grupos secuencialmente, pasos dentro de grupo en paralelo
+            for g_idx, group in enumerate(groups):
+                g_steps = group["steps"]
+                is_parallel = group["parallel"]
+    
+                if is_parallel:
+                    # Ejecutar todos los pasos del grupo en paralelo
+                    step_futures = {}
+                    with ThreadPoolExecutor(max_workers=min(len(g_steps), 8)) as executor:
+                        for step in g_steps:
+                            global_step_counter[0] += 1
+                            sn = global_step_counter[0]
+                            future = executor.submit(
+                                self._execute_step, step, sn, total, plan, progress_callback
+                            )
+                            step_futures[future] = step
+    
+                        for future in as_completed(step_futures):
+                            try:
+                                result = future.result(timeout=300)
+                                results.append(result)
+                            except Exception as e:
+                                results.append({
+                                    "step": global_step_counter[0],
+                                    "tool": step_futures[future].get("tool", "?"),
+                                    "ok": False, "error": f"Thread error: {e}"
+                                })
+                else:
+                    # Ejecutar pasos secuencialmente (1 por grupo)
                     for step in g_steps:
                         global_step_counter[0] += 1
                         sn = global_step_counter[0]
-                        future = executor.submit(
-                            self._execute_step, step, sn, total, plan, progress_callback
-                        )
-                        step_futures[future] = step
-
-                    for future in as_completed(step_futures):
-                        try:
-                            result = future.result(timeout=300)
-                            results.append(result)
-                        except Exception as e:
-                            results.append({
-                                "step": global_step_counter[0],
-                                "tool": step_futures[future].get("tool", "?"),
-                                "ok": False, "error": f"Thread error: {e}"
-                            })
-            else:
-                # Ejecutar pasos secuencialmente (1 por grupo)
-                for step in g_steps:
-                    global_step_counter[0] += 1
-                    sn = global_step_counter[0]
-                    result = self._execute_step(step, sn, total, plan, progress_callback)
-                    results.append(result)
+                        result = self._execute_step(step, sn, total, plan, progress_callback)
+                        results.append(result)
+        finally:
+            pass
 
         # 3. Verificar outputs
         missing = []
@@ -875,16 +1352,14 @@ class AutomyxAgent:
                 summary += f"  [{status}] Paso {r['step']}: {r['tool']} ({dur}ms)"
                 if not r["ok"]:
                     summary += f" -> {r.get('error', '?')}"
+                else:
+                    res_content = str(r.get("result", "") or "").strip()
+                    if res_content:
+                        summary += f"\n    Resultado: {res_content[:600]}"
                 summary += "\n"
 
         if missing:
             summary += f"\nArchivos no generados: {', '.join(missing)}"
-
-        if TERMINAL_AVAILABLE and term:
-            if n_fail == 0:
-                term.success(summary)
-            else:
-                term.warn(summary)
 
         self.history.append({"role": "assistant", "content": summary})
         return summary
@@ -952,75 +1427,6 @@ class AutomyxAgent:
         except Exception:
             pass
 
-        # --- FAST PATH (saludos / confirmaciones cortas, sin gastar LLM) ---
-        fast_responses = {
-            "hola": "¡Hola! Estoy listo. ¿En qué te ayudo?",
-            "estas ahi": "Sí, aquí estoy. Dime.",
-            "estas ahí": "Sí, aquí estoy. Dime.",
-            "estas ahi?": "Siempre activo. ¿Qué necesitas?",
-            "gracias": "¡De nada! Aquí sigo si me necesitas.",
-        }
-        user_lower = user_input.strip().lower()
-        if user_lower in fast_responses:
-            self.history.append({"role": "user", "content": user_input})
-            self.history.append({"role": "assistant", "content": fast_responses[user_lower]})
-            _set_phase("idle", "Esperando tu solicitud...")
-            return fast_responses[user_lower]
-
-        # --- INTENT-BASED FAST PATH (greetings, help, thanks, farewell, setup) ---
-        # These intents are conversational — NEVER call tools. The previous
-        # behavior of passing them to the LLM caused hallucinated tool calls
-        # like "ey mano" → open_program.
-        try:
-            from core.intent_engine import understand as _understand, extract_integration_target
-            _u = _understand(user_input)
-            _intent = _u.get("intent", "unknown")
-            if _intent in ("greeting", "thanks", "farewell"):
-                _responses = {
-                    "greeting": "¡Hola! Soy Automyx, tu agente de IA. ¿En qué te ayudo?",
-                    "thanks":   "¡De nada! Aquí sigo para lo que necesites.",
-                    "farewell": "¡Hasta luego! Si necesitas algo más, solo escríbeme.",
-                }
-                _resp = _responses[_intent]
-                self.history.append({"role": "user", "content": user_input})
-                self.history.append({"role": "assistant", "content": _resp})
-                _set_phase("idle", "Conversación casual")
-                return _resp
-            if _intent == "help":
-                _resp = (
-                    "Puedo hacer mucho por ti:\n\n"
-                    "🗣️  Conversar en lenguaje natural (con slang y typos)\n"
-                    "🛠️  Ejecutar herramientas (archivos, código, web, PC, multimedia)\n"
-                    "🧠  Analizar imágenes que me envíes\n"
-                    "📚  Configurar integraciones (Notion, GitHub, Telegram, etc.)\n"
-                    "⚡  Correr 6 tareas en paralelo\n"
-                    "🔌  Conectar canales: Telegram, Discord, Instagram, Web\n\n"
-                    "Dime qué necesitas o di 'configurar notion' para empezar."
-                )
-                self.history.append({"role": "user", "content": user_input})
-                self.history.append({"role": "assistant", "content": _resp})
-                _set_phase("idle", "Ayuda mostrada")
-                return _resp
-            if _intent == "setup_integration":
-                # Detect which integration the user wants
-                target = extract_integration_target(user_input)
-                if target:
-                    return self._guided_setup(target, _u)
-                else:
-                    _resp = (
-                        "Puedo ayudarte a configurar estas integraciones:\n\n"
-                        "📚 Notion\n🐙 GitHub\n✈️ Telegram\n💬 Discord\n📷 Instagram\n"
-                        "🗣️ ElevenLabs\n🅞 OpenAI\n🅐 Anthropic\n🔍 Tavily\n\n"
-                        "Di, por ejemplo: **configurar notion** o **conectar github**."
-                    )
-                    self.history.append({"role": "user", "content": user_input})
-                    self.history.append({"role": "assistant", "content": _resp})
-                    _set_phase("idle", "Menú de integraciones")
-                    return _resp
-        except Exception as _e:
-            # If intent detection fails, fall through to LLM (better than crashing)
-            pass
-
         # ---- FASE 1: ANALYZING (comprender quÃ© pidiÃ³ el usuario) ----
         get_agent_status()["is_active"] = True
         get_agent_status()["user_request"] = user_input
@@ -1034,70 +1440,97 @@ class AutomyxAgent:
         get_agent_status()["tool_result_ok"] = None
         get_agent_status()["plan"] = None
         get_agent_status()["flow_phases"] = []
-        _set_phase("analyzing", f"Analizando tu solicitud: \"{user_input[:60]}{'...' if len(user_input) > 60 else ''}\"")
+        
+        # Omit analyzing print as we already echo the user input in the REPL
+        _set_phase("analyzing", f"Analizando solicitud...")
         if progress_callback:
-            try: progress_callback("analyzing", f"Analizando: {user_input[:60]}")
+            try: progress_callback("analyzing", f"Analizando solicitud...")
             except Exception: pass
-        self._communicate_user_request(user_input)
+        
+        # ContextProbe: leer AUTOMYX.md del directorio actual si existe
+        import os as _os
+        _project_ctx = ""
+        for _ctx_file in ["AUTOMYX.md", "CLAUDE.md", "README.md"]:
+            _ctx_path = _os.path.join(_os.getcwd(), _ctx_file)
+            if _os.path.exists(_ctx_path):
+                try:
+                    with open(_ctx_path, "r", encoding="utf-8", errors="replace") as _f:
+                        _content = _f.read()[:3000]
+                    _project_ctx = f"\n\n[CONTEXTO DEL PROYECTO - {_ctx_file}]\n{_content}"
+                    break
+                except Exception:
+                    pass
 
-        # Pre-procesar con intent engine v2.5: normaliza y resuelve tool concreta
-        _intent_tool_hint = None
-        try:
-            from core.intent_engine import understand, resolve_tool_alias, TOOL_ALIASES
-            understanding = understand(user_input)
-            if understanding["intent"] != "unknown":
-                intent_name = understanding["intent"]
-                # Intentar resolver el intent a una tool concreta
-                resolved_tool = resolve_tool_alias(intent_name)
-                tool_hint = ""
-                if resolved_tool != intent_name:
-                    _intent_tool_hint = resolved_tool
-                    tool_hint = f"\nLa herramienta correcta para '{intent_name}' es: '{resolved_tool}'. USA ESTA."
-                elif intent_name in TOOL_ALIASES:
-                    tool_hint = f"\nLa herramienta correcta para '{intent_name}' es: '{TOOL_ALIASES[intent_name]}'. USA ESTA."
-                entities = understanding.get('entities', {})
-                intent_block = (
-                    f"\n[INTENT ENGINE v2.5]\n"
-                    f"Detecte que quieres: {intent_name} "
-                    f"(confianza {understanding['intent_confidence']:.0%})\n"
-                    f"Texto normalizado: \"{understanding['normalized']}\"\n"
-                    f"Palabra clave: \"{understanding.get('matched_keyword', '')}\"\n"
-                    f"Entidades: {entities}\n"
-                    f"INSTRUCCION: Usa este intent para decidir la PRIMERA herramienta.{tool_hint}"
-                    f" Si el intent es claro, ejecuta directamente sin pedir aclaracion."
-                )
-                self.history.append({"role": "system", "content": intent_block})
-        except Exception:
-            pass
+        # Lista dinamica de tools disponibles (para que el LLM use nombres exactos)
+        # Integraciones prioritarias van primero para que el LLM siempre las vea
+        _PRIORITY_PREFIXES = (
+            "notion_", "github_", "gh_", "telegram_", "discord_",
+            "elevenlabs_", "weather_", "obsidian_", "calendar_", "crypto_",
+        )
+        _all_tool_names = sorted(self.tools.keys())
+        _priority = [t for t in _all_tool_names if any(t.startswith(p) for p in _PRIORITY_PREFIXES)]
+        _rest     = [t for t in _all_tool_names if t not in set(_priority)]
+        _tool_names = _priority + _rest
+        _tool_list  = ", ".join(_tool_names[:200])
+        if len(_tool_names) > 200:
+            _tool_list += f" ... ({len(_tool_names)} total)"
 
-        # Construir el system prompt con filtros de permisos
-        # Buscar la seccion de herramientas (puede ser "Herramientas:" o "Herramienta:")
-        import re as _re_tool
-        _tool_section_match = _re_tool.search(r'(Herramientas?:?\s*[\s\S]*)', self.system_prompt)
-        tools_text = _tool_section_match.group(1) if _tool_section_match else ""
-        if agent_skills:
-            if not agent_skills.get("write", True):
-                blocked_tools = ["write_file", "append_to_file", "create_directory", "delete_file",
-                                 "ai_form_filler", "create_tiktok_edit", "add_dynamic_zoom",
-                                 "open_app_by_uri", "control_pc"]
-                for tool in blocked_tools:
-                    tools_text = tools_text.replace(f"Herramienta: {tool}", f"Herramienta Bloqueada (Sin Permiso): {tool}")
-            if not agent_skills.get("pc", True):
-                blocked_tools = ["execute_shell", "open_app_by_uri", "control_pc", "press_hotkey",
-                                 "type_text", "check_system_resources", "play_youtube_video",
-                                 "play_tiktok_desktop_video", "generate_vyrex_video"]
-                for tool in blocked_tools:
-                    tools_text = tools_text.replace(f"Herramienta: {tool}", f"Herramienta Bloqueada (Sin Permiso): {tool}")
+        _workspace_ctx = ""
+        if _WORKSPACE_AVAILABLE and get_workspace_manager is not None:
+            try:
+                _workspace_ctx = "\n" + get_workspace_manager().get_context_string()
+            except Exception:
+                pass
 
-        hw_context = f"\n[INFO DEL SISTEMA]\nOS: {self.hw.os_name} | Arch: {self.hw.arch} | UserDir: {self.hw.user_home}\nHardware: {self.hw.gpu_vendor} | Backend: {self.hw.acceleration_backend}"
+        # Integraciones activas (tokens configurados)
+        _active_integrations = []
+        if _os.environ.get("NOTION_API_KEY", "").strip():
+            _active_integrations.append("Notion (notion_create_page, notion_search, notion_append_blocks, notion_get_database, notion_set_token)")
+        if _os.environ.get("GITHUB_TOKEN", "").strip():
+            _active_integrations.append("GitHub (gh_list_repos, gh_create_pr, github_create_pr ...)")
+        if _os.environ.get("TELEGRAM_BOT_TOKEN", "").strip():
+            _active_integrations.append("Telegram (send_telegram)")
+        if _os.environ.get("ELEVENLABS_API_KEY", "").strip():
+            _active_integrations.append("ElevenLabs TTS")
+        if _os.environ.get("OPENWEATHER_API_KEY", "").strip():
+            _active_integrations.append("OpenWeather")
+        _integrations_line = (
+            f"\nINTEGRACIONES ACTIVAS (tokens configurados, ÚSALAS SIN DUDAR): "
+            + ", ".join(_active_integrations)
+            if _active_integrations else ""
+        )
 
-        if custom_system_prompt:
-            if self.history and self.history[0]["role"] == "system":
-                full_custom_prompt = f"{custom_system_prompt}\n\n[REGLAS DEL SISTEMA Y HERRAMIENTAS]\nDebes usar JSON para las herramientas.{hw_context}\nHerramienta{tools_text}"
-                self.history[0]["content"] = full_custom_prompt
-        else:
-            if self.history and self.history[0]["role"] == "system":
-                self.history[0]["content"] = self.system_prompt.split("Herramienta")[0] + f"Herramienta{hw_context}" + tools_text
+        hw_context = (
+            f"\n\n[CONTEXTO DEL SISTEMA — LEER ANTES DE RESPONDER]\n"
+            f"OS: {self.hw.os_name} | Arch: {self.hw.arch} | "
+            f"Dir: {_os.getcwd()} | GPU: {self.hw.gpu_vendor}\n"
+            f"IDENTIDAD CRITICA: Eres un agente que corre 100% LOCAL en el PC del usuario. "
+            f"NO eres una IA en la nube. TIENES acceso directo al sistema de archivos, "
+            f"puedes ejecutar comandos, leer/escribir archivos y operar el PC sin restricciones. "
+            f"NUNCA digas 'no puedo ejecutar en tu PC', 'soy una IA en la nube' ni 'no tengo acceso'. "
+            f"Si el usuario pide ejecutar algo → USA UNA HERRAMIENTA AHORA MISMO, no expliques.\n"
+            f"HERRAMIENTAS DISPONIBLES (usa EXACTAMENTE estos nombres): {_tool_list}"
+            f"{_integrations_line}"
+            f"{_project_ctx}"
+            f"{_workspace_ctx}"
+        )
+
+        if self.history and self.history[0]["role"] == "system":
+            if custom_system_prompt:
+                base = custom_system_prompt
+            else:
+                base = self.system_prompt
+
+            # Aplicar filtros de permisos si los hay (sin destruir el prompt)
+            if agent_skills:
+                if not agent_skills.get("write", True):
+                    for tool in ["write_file", "create_directory", "delete_file", "ai_form_filler"]:
+                        base = base.replace(f'"{tool}"', f'"[BLOQUEADO:{tool}]"')
+                if not agent_skills.get("pc", True):
+                    for tool in ["execute_cmd", "execute_shell", "control_pc", "press_key", "type_text"]:
+                        base = base.replace(f'"{tool}"', f'"[BLOQUEADO:{tool}]"')
+
+            self.history[0]["content"] = base + hw_context
 
         self.history.append({"role": "user", "content": user_input})
 
@@ -1120,60 +1553,59 @@ class AutomyxAgent:
         if context_parts:
             self.history.append({"role": "system", "content": "\n".join(context_parts)})
 
-        # Plan autogenerado (model-native) solo para tareas MULTI-PASO claras
-        _needs_plan = any(kw in user_input.lower() for kw in
-                          ["primer paso", "luego", "despues", "finalmente",
-                           "paso a paso", "secuencia", "varios pasos",
-                           "multiples pasos"])
-        if _needs_plan:
-            plan_prompt = (
-                f"\n[GENERA PLAN ESTRUCTURADO - MULTI-STEP - PARALELO]\n"
-                f"La tarea '{user_input[:80]}...' requiere multiples pasos.\n"
-                f"Genera PRIMERO un plan JSON con este esquema:\n"
-                f'{{"plan_id": "ts_XXXX", "steps": ['
-                f'{{"n": 1, "tool": "tool_name", "args": {{...}}, "rationale": "por que"}}, '
-                f'{{"n": 2, "tool": "...", "args": {{...}}, "rationale": "..."}}'
-                f'], "parallel_groups": [[1, 3], [2, 4]], "verification": [{{"check": "output_file_exists", "path": "..."}}]'
-                f"}}\n"
-                f"IMPORTANTE: Si hay pasos SIN dependencia entre si, agrupalos en parallel_groups "
-                f"(ej: pasos 1 y 3 pueden correr en paralelo). "
-                f"Los pasos QUE ESCRIBEN archivos o abren programas NO pueden ir en paralelo."
-                f"LUEGO ejecuta los pasos. Usa SOLO herramientas disponibles."
-            )
-            self.history.append({"role": "system", "content": plan_prompt})
-            if TERMINAL_AVAILABLE and term:
-                term.info("Generando plan nativo multi-paso...")
-        elif TaskCoordinator is not None:
+        # ── Native tool_use para Anthropic (previene planes JSON) ──────────
+        if hasattr(self.client, "set_tool_schemas"):
             try:
-                intent = TaskCoordinator.parse_intent(user_input)
-                if intent.get("action") in ("reeditar", "editar", "convertir", "organizar", "buscar", "crear") and intent.get("folder_hint"):
-                    plan_prompt = (
-                        f"\n[GENERA PLAN JSON ESTRUCTURADO]\n"
-                        f"Tu tarea: {user_input}\n"
-                        f"Genera SOLO un JSON vÃ¡lido con este esquema:\n"
-                        f'{{"plan_id": "timestamp", "steps": ['
-                        f'{{"n": 1, "tool": "nombre_herramienta", "args": {{...}}, "rationale": "por quÃ©"}}, '
-                        f'{{"n": 2, "tool": "...", "args": {{...}}, "rationale": "..."}}'
-                        f']}}'
-                        f"\nUsa SOLO tools disponibles. Si necesitas crear carpeta + juego, usa create_directory + write_file."
-                    )
-                    self.history.append({"role": "system", "content": plan_prompt})
-                    if TERMINAL_AVAILABLE and term:
-                        term.info("Generando plan nativo del modelo...")
+                self.client.set_tool_schemas(self.tools)
             except Exception:
                 pass
 
         final_answer = ""
         recent_actions: List[str] = []  # anti-loop
+        consecutive_errors: int = 0     # anti-confusion
+        recent_exact: set = set()       # detección de duplicado exacto
+        tools_used_in_task: list = []   # para auto-skill-save
 
         # ---- BUCLE PRINCIPAL ----
-        max_iterations = 15  # safety net
+        # Safety net: ajustar segun el modelo. Modelos rapidos (M3) toleran
+        # mas iteraciones; modelos lentos (GPT-OSS 120B) necesitan menos.
+        try:
+            from core.model_config import get_model_config
+            _mc = get_model_config(self.model_name)
+            if _mc.get("fast_mode"):
+                max_iterations = 12  # M3/M2.7: rapido, podemos permitirnos
+            elif "120b" in self.model_name.lower() or "340b" in self.model_name.lower():
+                max_iterations = 8   # modelos grandes: minimizar iteraciones
+            else:
+                max_iterations = 10
+        except Exception:
+            max_iterations = 10
         for iteration in range(max_iterations):
             get_agent_status()["step"] = iteration + 1
 
-            # Truncar historial para no explotar
-            if len(self.history) > 21:
-                self.history = [self.history[0]] + self.history[-20:]
+            # Recordatorio de tarea cada 3 iteraciones → previene confusión del LLM
+            if iteration > 0 and iteration % 3 == 0:
+                _remaining = max_iterations - iteration
+                self.history.append({"role": "system", "content": (
+                    f"[RECORDATORIO SISTEMA — iteración {iteration+1}/{max_iterations}] "
+                    f"Tarea original: '{user_input[:200]}'. "
+                    f"{'URGENTE: FINALIZA YA con lo que tienes, resume resultados.' if _remaining <= 2 else 'Continúa con foco. No repitas herramientas ya ejecutadas.'}"
+                )})
+
+            # OPTIMIZACION: truncar historial agresivamente para fast_mode
+            # Cada llamada envia todo el historial, asi que menos historial = mas rapido
+            _max_hist = 10 if self._fast_mode else 20
+            if len(self.history) > _max_hist + 1:
+                # Mantener system prompt (index 0) y los ultimos N mensajes
+                self.history = [self.history[0]] + self.history[-(_max_hist):]
+
+            # OPTIMIZACION: comprimir mensajes antiguos del historial
+            # (en vez de descartar, resume para preservar contexto)
+            try:
+                from core.speed import compress_history_messages
+                self.history = compress_history_messages(self.history, max_chars_per_msg=400)
+            except Exception:
+                pass
 
             # ---- FASE 2: THINKING (llamar al LLM) ----
             _set_phase("thinking", f"Pensando cÃ³mo responder (paso {iteration+1})...")
@@ -1186,49 +1618,131 @@ class AutomyxAgent:
             api_error: Optional[str] = None
 
             try:
-                completion = self.client.chat.completions.create(
-                    model=actual_model,
-                    messages=self.history,
-                    temperature=0.7,
-                    top_p=0.95,
-                    max_tokens=4096,
-                    stream=True,
-                )
-                if TERMINAL_AVAILABLE and term:
-                    term.llm_response_stream("")  # marca inicio de stream
-                for chunk in completion:
-                    if not getattr(chunk, "choices", None) or len(chunk.choices) == 0:
-                        continue
-                    delta = chunk.choices[0].delta
-                    if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                        reasoning_accumulated += delta.reasoning_content
-                        get_agent_status()["reasoning"] = reasoning_accumulated
-                        # Mostrar razonamiento en vivo si el terminal lo soporta
-                        if TERMINAL_AVAILABLE and term and hasattr(term, 'live_reasoning'):
-                            try: term.live_reasoning(reasoning_accumulated)
-                            except Exception: pass
-                    if getattr(delta, "content", None) is not None:
-                        ai_message += delta.content
+                # Use model_config for proper parameters per model
+                from core.model_config import get_model_config, supports_streaming
+                model_config = get_model_config(actual_model)
+                # OPTIMIZACION: en iteraciones internas (tool calls), limitamos
+                # max_tokens drasticamente. Solo la respuesta final (sin tools)
+                # tiene el budget completo.
+                _max_tokens = model_config.get("max_tokens", 4096)
+                if self._fast_mode:
+                    # Fast mode: maximo 1024 tokens para tool calls
+                    _max_tokens = min(_max_tokens, 1024)
+                else:
+                    # Cap universal: 2048 tokens es suficiente para un plan de 8 pasos.
+                    # Limitar a 4096+ deja al modelo generar 30+ tool calls de golpe.
+                    _max_tokens = min(_max_tokens, 2048)
+                # Timeout generoso para NVIDIA API (puede tardar 90-120s en cold start)
+                _timeout = 120
+                # OPTIMIZACION: session headers para affinity con NVIDIA
+                # (no usar en streaming porque el cliente openai lo maneja)
+                _call_kwargs = {
+                    "model": actual_model,
+                    "messages": self.history,
+                    "temperature": model_config.get("temperature", 0.7),
+                    "top_p": model_config.get("top_p", 0.95),
+                    "max_tokens": _max_tokens,
+                    "stream": supports_streaming(actual_model),
+                    "timeout": _timeout,
+                }
+                # extra_body para modelos con thinking mode (Nemotron Super, etc.)
+                if model_config.get("thinking"):
+                    _reasoning_budget = model_config.get("reasoning_budget", 8192)
+                    _call_kwargs["extra_body"] = {
+                        "chat_template_kwargs": {"enable_thinking": True},
+                        "reasoning_budget": _reasoning_budget,
+                    }
+                # Anhadir session headers solo si no es streaming (compatibilidad)
+                if not _call_kwargs["stream"]:
+                    try:
+                        from core.speed import get_session_headers
+                        _call_kwargs["extra_headers"] = get_session_headers()
+                    except Exception:
+                        pass
+                
+                completion = self.client.chat.completions.create(**_call_kwargs)
+                if _call_kwargs["stream"]:
+                    if TERMINAL_AVAILABLE and term:
+                        term.llm_response_stream("")  # marca inicio de stream
+                    _last_stream_update = 0.0
+                    _STREAM_UPDATE_INTERVAL = 0.12  # max ~8 display updates/seg
+                    for chunk in completion:
+                        if not getattr(chunk, "choices", None) or len(chunk.choices) == 0:
+                            continue
+                        delta = chunk.choices[0].delta
+                        if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                            reasoning_accumulated += delta.reasoning_content
+                            get_agent_status()["reasoning"] = reasoning_accumulated
+                            if TERMINAL_AVAILABLE and term and hasattr(term, 'live_reasoning'):
+                                try: term.live_reasoning(reasoning_accumulated)
+                                except Exception: pass
+                        if getattr(delta, "content", None) is not None:
+                            ai_message += delta.content
+                            # Throttle: actualizar display máximo cada 120ms
+                            _now = time.time()
+                            if TERMINAL_AVAILABLE and term and (_now - _last_stream_update) >= _STREAM_UPDATE_INTERVAL:
+                                _set_phase("streaming", ai_message)
+                                _last_stream_update = _now
+                else:
+                    if hasattr(completion, "choices") and len(completion.choices) > 0:
+                        ai_message = completion.choices[0].message.content or ""
+                
                 if TERMINAL_AVAILABLE and term:
                     term.llm_response_done()
+
+                if _TRACKER_AVAILABLE and get_tracker is not None:
+                    try:
+                        _usage = getattr(completion, "usage", None)
+                        if _usage is not None:
+                            get_tracker().track(
+                                actual_model,
+                                getattr(_usage, "prompt_tokens", 0),
+                                getattr(_usage, "completion_tokens", 0),
+                            )
+                    except Exception:
+                        pass
+
             except Exception as api_err:
-                # Fallback: reintentar con modelo seguro
                 _set_phase("error", f"Error con {self.model_name}, reintentando...")
-                if TERMINAL_AVAILABLE and term:
-                    term.warn(f"Error con modelo principal: {api_err}. Reintentando con fallback.")
                 api_error = str(api_err)
-                _fallback_model = "openai/gpt-oss-120b"
+                logger.warning(f"[run] API error: {api_err}")
+
+                # Fallback inteligente según provider:
+                # - Anthropic → reintentar mismo modelo SIN tool schemas (modo texto)
+                # - Otros     → usar cliente NVIDIA con modelo ligero
+                _fb_client = None
+                _fb_model  = actual_model
                 try:
-                    completion = self.client.chat.completions.create(
-                        model=_fallback_model,
+                    if self.provider == ModelProvider.ANTHROPIC:
+                        # Deshabilitar tool_use y reintentar con el mismo modelo
+                        _fb_client = self.client
+                        if hasattr(_fb_client, "chat") and hasattr(_fb_client.chat, "completions"):
+                            _fb_client.chat.completions._schemas = None
+                    else:
+                        from core.model_config import get_fallback_model
+                        _fb_model  = get_fallback_model()
+                        _fb_client = ModelProvider.get_client(_fb_model)
+                except Exception:
+                    pass
+
+                if _fb_client is None:
+                    _fb_client = self.client
+
+                if TERMINAL_AVAILABLE and term:
+                    term.warn(f"Reintentando con {_fb_model} (sin tool_use)..." )
+                try:
+                    completion = _fb_client.chat.completions.create(
+                        model=_fb_model,
                         messages=self.history,
-                        temperature=0.1,
-                        max_tokens=4096,
+                        temperature=0.3,
+                        top_p=0.95,
+                        max_tokens=2048,
                         stream=False,
+                        timeout=90,
                     )
-                    ai_message = completion.choices[0].message.content
+                    ai_message = completion.choices[0].message.content or ""
                 except Exception as e2:
-                    msg = f"Error en fallback ({_fallback_model}): {e2}"
+                    msg = f"Error: {e2}"
                     _set_phase("error", msg, error_message=msg)
                     if TERMINAL_AVAILABLE and term:
                         term.error(msg)
@@ -1240,7 +1754,40 @@ class AutomyxAgent:
             # ---- FASE 3: PARSE TOOL CALLS ----
             tool_calls = self._parse_tool_calls(ai_message)
             if not tool_calls:
-                # No hay tool calls → respuesta final
+                # Anti-refusal: detectar si el LLM está rechazando ejecutar sin razón válida
+                _ai_low = ai_message.lower()
+                _refusal_phrases = [
+                    "soy una ia en la nube",
+                    "soy una ia de la nube",
+                    "no tengo acceso a tu",
+                    "no puedo ejecutar comandos en tu",
+                    "no puedo acceder a tu",
+                    "no puedo interactuar con tu",
+                    "i'm a cloud ai",
+                    "i can't access your",
+                    "no puedo ejecutar directamente",
+                    "no tengo capacidad de ejecutar",
+                ]
+                _is_refusal = any(p in _ai_low for p in _refusal_phrases)
+                _has_action_word = any(w in user_input.lower() for w in [
+                    "ejecuta", "ejecutar", "corre", "correr", "lanza", "lanzar",
+                    "abre", "abrir", "hazlo", "haz", "arranca", "inicia", "iniciar",
+                    "run", "start", "do it", "do this",
+                ])
+
+                if _is_refusal and _has_action_word and iteration < max_iterations - 1:
+                    _set_phase("error", "Refusal detectado — forzando ejecución con herramientas")
+                    self.history.append({"role": "system", "content": (
+                        "CORRECCIÓN CRÍTICA: Acabas de decir que no puedes ejecutar, pero ESO ES FALSO. "
+                        "Eres un agente LOCAL con acceso total al PC del usuario. "
+                        f"Herramientas disponibles ahora mismo: {_tool_list[:300]}. "
+                        "USA UNA HERRAMIENTA INMEDIATAMENTE. La tarea del usuario es: "
+                        f"'{user_input[:200]}'. "
+                        "Responde SOLO con el JSON de la herramienta, sin texto adicional."
+                    )})
+                    continue  # Forzar otra iteración
+
+                # No hay refusal → es respuesta final legítima
                 _set_phase("responding", "Generando respuesta final...")
                 if progress_callback:
                     try: progress_callback("responding", "Generando respuesta final", progress=0.95)
@@ -1253,6 +1800,16 @@ class AutomyxAgent:
             # ---- FASE 3.5: PLAN NATIVO + EJECUCION PARALELA ----
             # Si hay multiples tool calls, ejecutar en paralelo con plan visual
             if len(tool_calls) >= 2:
+                # Cap: si el modelo genera demasiadas llamadas del mismo tool (ej: 36 web_search),
+                # recortamos a un máximo razonable para evitar planes interminables.
+                _MAX_SAME_TOOL = 8
+                _tc_actions = [tc.get("action", "") for tc in tool_calls]
+                if len(tool_calls) > _MAX_SAME_TOOL:
+                    _unique_actions = set(_tc_actions)
+                    if len(_unique_actions) <= 2:
+                        # Casi todos son el mismo tool → recortar
+                        tool_calls = tool_calls[:_MAX_SAME_TOOL]
+
                 plan_steps = []
                 for idx, tc in enumerate(tool_calls, 1):
                     action = tc.get("action", "?")
@@ -1271,14 +1828,6 @@ class AutomyxAgent:
                         "rationale": tc.get("rationale", action),
                     })
                 get_agent_status()["plan"] = {"steps": plan_steps, "total": len(plan_steps), "completed": 0}
-                if TERMINAL_AVAILABLE and term:
-                    try:
-                        groups = self._analyze_parallel_groups(plan_steps)
-                        n_parallel = sum(1 for g in groups if g["parallel"])
-                        term.info(f"Plan de {len(plan_steps)} pasos ({n_parallel} en paralelo)")
-                        term.render_plan(plan_steps, title=f"Plan paralelo: {user_input[:40]}...")
-                    except Exception:
-                        pass
                 if progress_callback:
                     try: progress_callback("plan_created", f"Plan de {len(plan_steps)} pasos en paralelo", plan=plan_steps)
                     except Exception: pass
@@ -1288,12 +1837,33 @@ class AutomyxAgent:
                     all_results_msg = _plan_result
                 else:
                     all_results_msg = "Error ejecutando plan en paralelo."
+
+                # Si todos los pasos fallaron, instruir al LLM que NO afirme éxito
+                n_ok_check = all_results_msg.count("[OK]") if "[OK]" in all_results_msg else (
+                    int(all_results_msg.split("OK,")[0].split(":")[-1].strip()) if "OK," in all_results_msg else -1
+                )
+                all_failed = ("0 OK" in all_results_msg or n_ok_check == 0)
+                if all_failed and ("fallos" in all_results_msg or "FAIL" in all_results_msg):
+                    all_results_msg += (
+                        "\n\n⚠️ INSTRUCCIÓN CRÍTICA: Ningún paso se ejecutó exitosamente. "
+                        "NO afirmes que completaste la tarea. "
+                        "Informa al usuario del error específico y qué necesita corregirse."
+                    )
+
+                # Skip the sequential execution since we already ran them in parallel
+                get_agent_status()["tool_result_ok"] = not all_failed
+                self.history.append({"role": "user", "content": f"Resultados de herramientas (paralelo):\n{all_results_msg}"})
+                _set_phase("learning", "Resultados recolectados", tool_result_summary=all_results_msg)
+                if progress_callback:
+                    try: progress_callback("learning", "Resultados recolectados")
+                    except Exception: pass
+                continue
             else:
                 get_agent_status()["plan"] = None
                 get_agent_status()["flow_phases"] = []
 
             # ---- FASE 4: EJECUTAR TOOL CALL UNICO (cuando no hay plan multi-paso) ----
-            _set_phase("tool_executing", f"Ejecutando {len(tool_calls)} herramienta(s)...")
+            # Claude Code style: Only set phase, avoid double printing
             all_results_msg = ""
             loop_detected = False
 
@@ -1344,6 +1914,35 @@ class AutomyxAgent:
                 if len(recent_actions) > 15:
                     recent_actions.pop(0)
 
+                # Detección de duplicado EXACTO (misma acción + mismos args = 100% atascado)
+                try:
+                    import json as _j_dedup
+                    _exact_key = f"{action}|{_j_dedup.dumps(args, sort_keys=True, default=str)[:200]}"
+                    if _exact_key in recent_exact:
+                        all_results_msg += (
+                            f"SISTEMA: Ya ejecutaste '{action}' con EXACTAMENTE los mismos argumentos. "
+                            f"El resultado NO cambiará. CAMBIA DE ESTRATEGIA — usa otra herramienta o parámetros distintos.\n"
+                        )
+                        continue
+                    recent_exact.add(_exact_key)
+                except Exception:
+                    pass
+
+                # Registrar tool para auto-skill-save al finalizar
+                tools_used_in_task.append({
+                    "tool": action,
+                    "args": {k: str(v)[:60] for k, v in (args or {}).items()}
+                })
+
+                # Auto-web-search cuando hay 2+ errores consecutivos y web_search disponible
+                if consecutive_errors >= 2 and "web_search" in self.tools and action != "web_search":
+                    _err_query = f"{action} error {str(args.get('command', args.get('path', '')))[:50]}"
+                    try:
+                        _ws_result = self.tools["web_search"](query=_err_query[:120])
+                        all_results_msg += f"\n[AUTO-BÚSQUEDA] Soluciones encontradas para '{action}':\n{str(_ws_result)[:400]}\n"
+                    except Exception:
+                        pass
+
                 # 4.3: Comunicar QUÃ‰ voy a hacer y por quÃ©
                 args_summary = _truncate_args(args)
                 rationale = tool_call.get("rationale", "")
@@ -1355,23 +1954,47 @@ class AutomyxAgent:
                 get_agent_status()["tool_name"] = action
                 get_agent_status()["tool_args_summary"] = args_summary
                 get_agent_status()["reasoning"] = rationale
+                
                 _set_phase("tool_executing", narrative,
-                          tool_name=action, tool_args_summary=args_summary)
+                          tool_name=action, tool_args_summary=args_summary, rationale=rationale,
+                          step=idx, total=len(tool_calls))
+                
                 if TERMINAL_AVAILABLE and term:
-                    term.tool_executing(action, args)
-                    if rationale:
-                        try: term.info(f"Razon: {rationale}")
-                        except Exception: pass
+                    # Note: term.tool_executing ya imprime la acción, evitamos imprimir cosas dobles
+                    # Lo comentamos porque la UI ya lo muestra a través de _set_phase y repl.py
+                    # term.tool_executing(action, args)
+                    pass
 
                 # 4.4: Ejecutar la tool con medición de tiempo y auto-healing
                 t0 = time.time()
                 tool_result: Any = None
                 tool_exc: Optional[BaseException] = None
-                if progress_callback:
-                    try: progress_callback("tool_executing", f"Ejecutando {action}", step=iteration+1, tool_name=action)
-                    except Exception: pass
+
+                # OPTIMIZACION: tool result caching - no re-ejecutar misma tool
+                # con mismos args (ahorra tiempo en llamadas repetidas)
+                try:
+                    from core.speed import get_cached_tool_result, set_cached_tool_result
+                    cached = get_cached_tool_result(action, args)
+                    if cached is not None:
+                        tool_result = cached
+                        duration_ms = int((time.time() - t0) * 1000)
+                        _set_phase("tool_executed", f"{action} (cache hit)",
+                                   step=iteration+1, total=len(tool_calls),
+                                   tool_name=action, duration_ms=duration_ms)
+                        result_msg = f"Herramienta {action} ejecutada en {duration_ms}ms (cache). Resultado: {tool_result}"
+                        all_results_msg += result_msg + "\n"
+                        continue
+                except Exception:
+                    pass
+
                 try:
                     tool_result = self.tools[action](**args)
+                    # Guardar en cache para llamadas futuras
+                    try:
+                        from core.speed import set_cached_tool_result
+                        set_cached_tool_result(action, args, tool_result)
+                    except Exception:
+                        pass
                 except (ImportError, ModuleNotFoundError) as e:
                     # Auto-install attempt: detect missing module, pip install, retry once.
                     import re as _re
@@ -1427,19 +2050,34 @@ class AutomyxAgent:
                         pass
 
                 duration_ms = int((time.time() - t0) * 1000)
-                if progress_callback:
-                    try: progress_callback("tool_executed", f"{action} listo en {duration_ms}ms", step=iteration+1, tool_name=action)
-                    except Exception: pass
+
+                if _AUDIT_AVAILABLE and get_audit is not None:
+                    try:
+                        _ws_name = "default"
+                        if _WORKSPACE_AVAILABLE and get_workspace_manager is not None:
+                            _ws_name = get_workspace_manager().current_name
+                        get_audit().log(
+                            action=action,
+                            args=args,
+                            result=tool_result if tool_exc is None else str(tool_exc),
+                            ok=tool_exc is None,
+                            duration_ms=duration_ms,
+                            workspace=_ws_name,
+                        )
+                    except Exception:
+                        pass
 
                 # 4.5: Procesar resultado y comunicar
                 if tool_exc is not None:
                     result_msg = f"Error ejecutando {action}: {tool_exc}"
                     ok = False
                     summary = f"exception: {str(tool_exc)[:60]}"
+                    # Claude Code style prints errors immediately via the callback, so we keep this set_phase
                     _set_phase("error", f"{action} fallÃ³: {str(tool_exc)[:60]}",
                               error_message=str(tool_exc), tool_result_summary=summary, tool_result_ok=False)
-                    if TERMINAL_AVAILABLE and term:
-                        term.tool_result(action, ok=False, summary=summary)
+                    # Eliminamos la impresion doble de tool_result_error aqui
+                    # if TERMINAL_AVAILABLE and term:
+                    #    term.tool_result(action, ok=False, summary=summary)
                     # Registrar para aprendizaje
                     if ErrorLearningSystem is not None:
                         try:
@@ -1448,6 +2086,23 @@ class AutomyxAgent:
                             pass
                 else:
                     result_msg = f"Herramienta {action} ejecutada en {duration_ms}ms. Resultado: {tool_result}"
+
+                    # read_file vacío → guiar al LLM a usar execute_cmd como fallback
+                    if action in ("read_file", "read_text_file", "get_file") and not str(tool_result or "").strip():
+                        _fp = args.get("file_path", args.get("path", args.get("filename", "")))
+                        result_msg += (
+                            f"\nNOTA SISTEMA: read_file devolvió vacío para '{_fp}'. "
+                            f"El archivo existe pero la herramienta no pudo leerlo. "
+                            f"Usa INMEDIATAMENTE: execute_cmd(command='type \"{_fp}\"') para leerlo en Windows."
+                        )
+                    # list_directory vacío → fallback con execute_cmd dir
+                    elif action in ("list_directory", "list_files", "list_dir") and not tool_result:
+                        _dp = args.get("directory", args.get("path", "."))
+                        result_msg += (
+                            f"\nNOTA SISTEMA: list_directory devolvió vacío para '{_dp}'. "
+                            f"Usa: execute_cmd(command='dir \"{_dp}\"') como fallback."
+                        )
+
                     if isinstance(tool_result, dict):
                         ok = bool(tool_result.get("ok", True)) and not tool_result.get("error")
                         if tool_result.get("error") and ErrorLearningSystem is not None:
@@ -1460,11 +2115,28 @@ class AutomyxAgent:
                     summary = _summarize_result(tool_result)
                     _set_phase("tool_executed",
                               f"{action} completado en {duration_ms}ms: {summary}",
+                              step=idx, total=len(tool_calls),
+                              tool_name=action, duration_ms=duration_ms,
                               tool_result_summary=summary, tool_result_ok=ok)
-                    if TERMINAL_AVAILABLE and term:
-                        term.tool_result(action, ok=ok, summary=f"{summary} ({duration_ms}ms)")
+                    # Eliminamos la impresion doble de tool_result aqui ya que progress_cb lo maneja y la UI lo muestra
+                    # if TERMINAL_AVAILABLE and term:
+                    #     term.tool_result(action, ok=ok, summary=f"{summary} ({duration_ms}ms)")
 
                 all_results_msg += result_msg + "\n"
+
+                # Rastreo de errores consecutivos → detectar confusión
+                if tool_exc is not None:
+                    consecutive_errors += 1
+                    if consecutive_errors >= 3:
+                        all_results_msg += (
+                            f"\n[SISTEMA CRITICO] {consecutive_errors} errores consecutivos detectados. "
+                            f"CAMBIA COMPLETAMENTE de estrategia. "
+                            f"Opciones: (1) usa 'execute_cmd' con comandos directos, "
+                            f"(2) intenta una ruta alternativa, "
+                            f"(3) resume lo que ya lograste y explícalo al usuario.\n"
+                        )
+                else:
+                    consecutive_errors = 0
 
                 # Actualizar progreso del plan
                 if get_agent_status().get("plan"):
@@ -1484,24 +2156,92 @@ class AutomyxAgent:
             if loop_detected:
                 all_results_msg += "\nâš ï¸ SISTEMA: Hubo un bucle. Cambia de estrategia o finaliza con lo que tengas."
             if all_results_msg.strip():
-                all_results_msg += "\n\nSIGUIENTE PASO: Si ya completaste la tarea, explica el resultado en espaÃ±ol sin JSON. Si aÃºn falta, ejecuta la siguiente herramienta."
-                self.history.append({"role": "system", "content": all_results_msg})
+                all_results_msg += (
+                    "\n\n[INSTRUCCION CRITICA] Tu PROXIMA respuesta DEBE ser texto en espanol "
+                    "explicando que hiciste y el resultado. "
+                    "NO ejecutes mas herramientas si la tarea ya esta completa. "
+                    "Si falta algo, ejecuta UNA sola herramienta mas."
+                )
+                self.history.append({"role": "user", "content": all_results_msg})
             else:
                 final_answer = ai_message
                 break
         else:
-            # Safety net: si alcanzamos max_iterations
+            # Safety net: limite de iteraciones
             if TERMINAL_AVAILABLE and term:
-                term.warn(f"Alcanzado lÃ­mite de {max_iterations} iteraciones. Cerrando con respuesta parcial.")
-            final_answer = ai_message if ai_message else "He realizado varias acciones pero el bucle alcanzÃ³ el lÃ­mite. AquÃ­ estÃ¡ lo Ãºltimo que hice:\n" + all_results_msg
+                term.warn(f"Limite de {max_iterations} iteraciones alcanzado.")
+            # Si la ultima respuesta del modelo es JSON de herramientas, no la retornamos
+            # como respuesta final — dejamos que el auto-resumen tome el control.
+            _last_is_json = bool(ai_message and self._parse_tool_calls(ai_message))
+            final_answer = ai_message if (ai_message and not _last_is_json) else ""
+
+        # ---- Auto-resumen cuando LLM no dio respuesta final ----
+        if not final_answer.strip() and tools_used_in_task:
+            _n = len(tools_used_in_task)
+            _tool_names = ", ".join(t["tool"] for t in tools_used_in_task[:6])
+            final_answer = (
+                f"Completado. {_n} accion{'es' if _n > 1 else ''}: {_tool_names}."
+                + (f" (y {_n - 6} mas)" if _n > 6 else "")
+            )
+            _set_phase("responding", final_answer)
+            if progress_callback:
+                try:
+                    progress_callback("responding", final_answer)
+                except Exception:
+                    pass
 
         # ---- FASE 6: CIERRE + AUTO-LEARNING ----
+
+        # AUTO-SKILL-SAVE: tarea compleja (3+ tools) y exitosa → guardar habilidad
+        if len(tools_used_in_task) >= 3 and final_answer and len(final_answer) > 40:
+            try:
+                from core.auto_skill import AutoSkillCreator
+                import re as _re_sk
+                _asc = AutoSkillCreator(model=self.model_name)
+                _skill_cat = _asc.detect_needed_skill(user_input)
+                _slug = _skill_cat or _re_sk.sub(r'[^a-z0-9]+', '_', user_input[:28].lower()).strip('_')
+                _steps_md = "\n".join(
+                    f"{i+1}. `{t['tool']}`"
+                    + (f" — {list(t['args'].values())[0]}" if t.get('args') else "")
+                    for i, t in enumerate(tools_used_in_task[:20])
+                )
+                _ok_skill = _asc.create_custom_skill(
+                    name=_slug,
+                    description=user_input[:100],
+                    instructions=(
+                        f"# Skill auto-generada\n\n"
+                        f"## Tarea original\n{user_input[:300]}\n\n"
+                        f"## Pasos ejecutados ({len(tools_used_in_task)} herramientas)\n{_steps_md}\n\n"
+                        f"## Resultado\n{final_answer[:500]}\n"
+                    ),
+                )
+                if _ok_skill and progress_callback:
+                    try:
+                        progress_callback("skill_saved", f"skill guardada: {_slug}", tool_name=_slug)
+                    except Exception:
+                        pass
+                # Guardar resumen de tarea en memoria persistente
+                try:
+                    from core.memory import MemoryManager
+                    _mm = MemoryManager()
+                    _mm.save_task(
+                        task=user_input[:200],
+                        tools_count=len(tools_used_in_task),
+                        skill_saved=_slug if _ok_skill else None,
+                        result_preview=final_answer[:200],
+                    )
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
         _set_phase("idle", "Listo. Esperando tu siguiente solicitud.")
         get_agent_status()["is_active"] = False
         get_agent_status()["step"] = 0
         get_agent_status()["total_steps"] = 0
-        if TERMINAL_AVAILABLE and term:
-            term.success(f"Respuesta final lista ({len(final_answer)} caracteres).")
+        # No imprimir nada al final para mantenerlo silencioso al estilo Claude Code
+        # if TERMINAL_AVAILABLE and term:
+        #    term.success(f"Respuesta final lista ({len(final_answer)} caracteres).")
 
         # Store conversation in Aumformbring for pattern learning
         if aumformbring_system is not None:
@@ -1538,3 +2278,11 @@ class AutomyxAgent:
 
         _set_phase("idle", "Listo. Esperando tu siguiente solicitud.")
         return final_answer
+
+    def get_speed_report(self) -> str:
+        """Retorna un reporte de las metricas de velocidad."""
+        try:
+            from core.speed import print_speed_report
+            return print_speed_report()
+        except Exception:
+            return "No speed metrics available"

@@ -85,7 +85,7 @@ class AutomyxConfig:
                 "nvidia": {
                     "base_url": "https://integrate.api.nvidia.com/v1",
                     "api_key": "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",
-                    "models": ["nvidia/gpt-oss-120b", "nvidia/llama-3.1-nemotron-70b-instruct"]
+                    "models": ["nvidia/gpt-oss-120b", "moonshotai/kimi-k2.6"]
                 },
                 "openai": {
                     "base_url": "https://api.openai.com/v1",

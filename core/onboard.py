@@ -229,6 +229,7 @@ def step2_pick_llm() -> str:
         Choice("⚡ GPT-OSS-120b · NVIDIA API · default", "openai/gpt-oss-120b"),
         Choice("🧠 GLM-5.1 · NVIDIA API", "z-ai/glm-5.1"),
         Choice("🌐 MiniMax-m2.7 · NVIDIA API", "minimaxai/minimax-m2.7"),
+        Choice("🔮 Kimi K2.6 · NVIDIA API", "moonshotai/kimi-k2.6"),
         Separator(f"[{BLUE}]── Commercial APIs ──[/]"),
         Choice("🅞 OpenAI · GPT-4o / o1", "openai/gpt-4o"),
         Choice("🅐 Anthropic · Claude 3.5 Sonnet", "anthropic/claude-3-5-sonnet-20240620"),

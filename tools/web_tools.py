@@ -1,37 +1,129 @@
-from playwright.sync_api import sync_playwright
 import webbrowser
-import pywhatkit
-import pyautogui
 import time
 import urllib.parse
 import requests
-from bs4 import BeautifulSoup
-import pyperclip
+
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None
+
+try:
+    import pyautogui
+except ImportError:
+    pyautogui = None
+
+try:
+    import pyperclip
+except ImportError:
+    pyperclip = None
+
+try:
+    import pywhatkit
+except ImportError:
+    pywhatkit = None
+
+_DDG_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
+}
 
 class WebTools:
     @staticmethod
-    def web_search(query: str) -> str:
-        """Busca en Google usando el navegador predeterminado y devuelve un mensaje de confirmación."""
-        try:
-            # En lugar de usar Playwright oculto que puede fallar por bloqueos de Google,
-            # abrimos la búsqueda en el navegador real del usuario, lo que es más espectacular visualmente.
-            url = f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}"
-            webbrowser.open(url)
-            return f"✅ Búsqueda web abierta en tu navegador: '{query}'"
-        except Exception as e:
-            # Plan B: Intentar con DuckDuckGo si Google falla
+    def web_search(query: str, num_results: int = 8) -> str:
+        """Busca en internet y devuelve resultados reales con títulos, URLs y fragmentos."""
+        import os, json, time
+
+        # ── 1. Brave Search API (si hay key) ──────────────────────────────
+        brave_key = os.environ.get("BRAVE_API_KEY", "").strip()
+        if brave_key:
             try:
-                import requests
+                resp = requests.get(
+                    "https://api.search.brave.com/res/v1/web/search",
+                    headers={
+                        "Accept": "application/json",
+                        "Accept-Encoding": "gzip",
+                        "X-Subscription-Token": brave_key,
+                    },
+                    params={"q": query, "count": num_results, "freshness": "month"},
+                    timeout=12,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    hits = data.get("web", {}).get("results", [])
+                    if hits:
+                        lines = [f"[Brave Search] '{query}'\n"]
+                        for h in hits[:num_results]:
+                            title = h.get("title", "")
+                            url   = h.get("url", "")
+                            desc  = h.get("description", "")
+                            lines.append(f"• {title}\n  {url}\n  {desc}\n")
+                        return "\n".join(lines)
+            except Exception:
+                pass
+
+        # ── 2. DuckDuckGo JSON (sin key) ──────────────────────────────────
+        try:
+            resp = requests.get(
+                "https://api.duckduckgo.com/",
+                params={"q": query, "format": "json", "no_html": "1",
+                        "skip_disambig": "1", "no_redirect": "1"},
+                headers=_DDG_HEADERS,
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                abstract = data.get("AbstractText", "")
+                abstract_url = data.get("AbstractURL", "")
+                related = data.get("RelatedTopics", [])
+                lines = [f"[DuckDuckGo Instant] '{query}'\n"]
+                if abstract:
+                    lines.append(f"Resumen: {abstract}\nFuente: {abstract_url}\n")
+                for item in related[:6]:
+                    if isinstance(item, dict) and item.get("Text"):
+                        url = item.get("FirstURL", "")
+                        lines.append(f"• {item['Text'][:200]}\n  {url}\n")
+                if len(lines) > 1:
+                    return "\n".join(lines)
+        except Exception:
+            pass
+
+        # ── 3. DuckDuckGo HTML scraping ───────────────────────────────────
+        try:
+            resp = requests.get(
+                f"https://html.duckduckgo.com/html/?q={urllib.parse.quote_plus(query)}",
+                headers=_DDG_HEADERS,
+                timeout=12,
+            )
+            if resp.status_code == 200:
                 from bs4 import BeautifulSoup
-                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-                res = requests.get(f'https://html.duckduckgo.com/html/?q={query}', headers=headers)
-                soup = BeautifulSoup(res.text, 'html.parser')
+                soup = BeautifulSoup(resp.text, "html.parser")
                 results = []
-                for a in soup.find_all('a', class_='result__snippet'):
-                    results.append(a.text)
-                return "Resultados de búsqueda:\n" + "\n".join(results[:5])
-            except Exception as e2:
-                return f"❌ Error en búsqueda web: {str(e)} / {str(e2)}"
+                for r in soup.select(".result")[:num_results]:
+                    title_el = r.select_one(".result__title a")
+                    snip_el  = r.select_one(".result__snippet")
+                    url_el   = r.select_one(".result__url")
+                    if title_el:
+                        title = title_el.get_text(strip=True)
+                        url   = url_el.get_text(strip=True) if url_el else ""
+                        snip  = snip_el.get_text(strip=True) if snip_el else ""
+                        results.append(f"• {title}\n  {url}\n  {snip}")
+                if results:
+                    return f"[DuckDuckGo] '{query}'\n\n" + "\n\n".join(results)
+        except Exception:
+            pass
+
+        # ── 4. Último fallback: abrir navegador + mensaje claro ───────────
+        try:
+            webbrowser.open(f"https://duckduckgo.com/?q={urllib.parse.quote_plus(query)}")
+        except Exception:
+            pass
+        return (
+            f"⚠️ No se pudo obtener resultados programáticos para: '{query}'. "
+            f"Se abrió el navegador. Verifica BRAVE_API_KEY para búsquedas confiables."
+        )
 
     @staticmethod
     def play_youtube_video(query: str) -> str:
@@ -52,15 +144,60 @@ class WebTools:
                 return f"❌ Error intentando reproducir en YouTube: {str(e)} | {str(e2)}"
             
     @staticmethod
-    def open_website(url: str) -> str:
-        """Abre una URL específica en el navegador (ej: https://chatgpt.com)."""
+    def open_website(url: str, just_open: bool = False) -> str:
+        """Abre una URL y devuelve el contenido de texto de la página.
+        Si just_open=True, solo abre el navegador sin raspar contenido."""
+        if not url.startswith("http"):
+            url = "https://" + url
+
+        if just_open:
+            try:
+                webbrowser.open(url)
+            except Exception:
+                pass
+            return f"✅ Abriendo {url} en el navegador."
+
+        # Intentar raspar el contenido con requests + BeautifulSoup
         try:
-            if not url.startswith('http'):
-                url = 'https://' + url
-            webbrowser.open(url)
-            return f"✅ Abriendo {url} en tu navegador."
-        except Exception as e:
-            return f"❌ Error abriendo la web: {str(e)}"
+            resp = requests.get(url, headers=_DDG_HEADERS, timeout=15)
+            resp.raise_for_status()
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for tag in soup(["script", "style", "nav", "footer", "header",
+                              "aside", "form", "noscript"]):
+                tag.decompose()
+            text = soup.get_text(separator="\n", strip=True)
+            # Compactar líneas vacías
+            lines = [l for l in text.splitlines() if l.strip()]
+            content = "\n".join(lines[:300])
+            if len(lines) > 300:
+                content += f"\n... [{len(lines) - 300} líneas más]"
+            return f"📄 Contenido de {url}:\n\n{content}"
+        except Exception as e_req:
+            # Fallback: Playwright headless si está disponible
+            try:
+                from playwright.sync_api import sync_playwright
+                from bs4 import BeautifulSoup
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(headless=True)
+                    page = browser.new_page()
+                    page.goto(url, timeout=20000, wait_until="domcontentloaded")
+                    html = page.content()
+                    browser.close()
+                soup = BeautifulSoup(html, "html.parser")
+                for tag in soup(["script", "style", "nav", "footer"]):
+                    tag.decompose()
+                text = soup.get_text(separator="\n", strip=True)
+                lines = [l for l in text.splitlines() if l.strip()]
+                content = "\n".join(lines[:300])
+                return f"📄 Contenido (Playwright) de {url}:\n\n{content}"
+            except Exception as e_pw:
+                # Último fallback: abrir en navegador
+                try:
+                    webbrowser.open(url)
+                except Exception:
+                    pass
+                return f"⚠️ No se pudo raspar {url}: {e_req}. Se abrió en el navegador."
     
     @staticmethod
     def get_current_browser_url() -> str:

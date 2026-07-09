@@ -171,7 +171,13 @@ class VideoTools:
             "vintage": "colorbalance=rs=0.3:gs=-0.2:bs=-0.2, eq=contrast=0.9:saturation=0.6, curves=all=vintage",
             "black_and_white": "format=gray, eq=contrast=1.2",
             "vibrant": "eq=contrast=1.2:saturation=1.5:gamma=1.05",
-            "teal_and_orange": "colorbalance=rm=0.2:gm=-0.2:bm=-0.2:rs=-0.2:gs=0.2:bs=0.2:rh=0.1:gh=-0.1:bh=-0.1, eq=saturation=1.2"
+            "teal_and_orange": "colorbalance=rm=0.2:gm=-0.2:bm=-0.2:rs=-0.2:gs=0.2:bs=0.2:rh=0.1:gh=-0.1:bh=-0.1, eq=saturation=1.2",
+            "youtube": "eq=contrast=1.15:brightness=0.03:saturation=1.2:gamma=1.02, unsharp=5:5:0.5:3:3:0.0",
+            "neon": "hue=h=270:s=2, eq=contrast=1.3:brightness=0.05:saturation=2.0, gblur=sigma=0.5",
+            "cold": "colorbalance=rs=-0.1:gs=-0.05:bs=0.2:rm=-0.1:gm=0.0:bm=0.15:rh=-0.1:gh=0.0:bh=0.1, eq=contrast=1.1:saturation=0.9",
+            "warm": "colorbalance=rs=0.2:gs=0.05:bs=-0.1:rm=0.15:gm=0.05:bm=-0.1:rh=0.1:gh=0.0:bh=-0.1, eq=contrast=1.05:saturation=1.15",
+            "drama": "eq=contrast=1.5:brightness=-0.05:saturation=0.8:gamma=0.9, vignette=angle=PI/4",
+            "anime": "eq=contrast=1.3:saturation=1.8:gamma=1.1, unsharp=5:5:1.5:3:3:0.5",
         }
         
         filter_str = video_filters.get(style, video_filters["cinematic"])
@@ -224,7 +230,12 @@ class VideoTools:
             "wipe_down": f"xfade=transition=wipeup:duration={duration}:offset={start_transition}",
             "cube": f"xfade=transition=cube:duration={duration}:offset={start_transition}",
             "zoom": f"xfade=transition=zoom:duration={duration}:offset={start_transition}",
-            "slide": f"xfade=transition=slideleft:duration={duration}:offset={start_transition}"
+            "slide": f"xfade=transition=slideleft:duration={duration}:offset={start_transition}",
+            "dissolve": f"xfade=transition=dissolve:duration={duration}:offset={start_transition}",
+            "pixelize": f"xfade=transition=pixelize:duration={duration}:offset={start_transition}",
+            "radial": f"xfade=transition=radial:duration={duration}:offset={start_transition}",
+            "circleopen": f"xfade=transition=circleopen:duration={duration}:offset={start_transition}",
+            "diagtl": f"xfade=transition=diagtl:duration={duration}:offset={start_transition}",
         }
         
         transition_filter = transition_filters.get(transition_type, transition_filters["crossfade"])
@@ -475,7 +486,7 @@ class VideoTools:
 
             # Parse 'centered_green' style strings
             subtitle_style = kwargs.get('subtitle_style') or kwargs.get('sub_style')
-            if isinstance(subtitle_style, str) and not style or style == 'hype':
+            if isinstance(subtitle_style, str) and subtitle_style and (not style or style == 'hype'):
                 parsed = VideoTools._parse_subtitle_style_string(subtitle_style)
                 if "style" in parsed: style = parsed["style"]
                 if "position" in parsed: position = parsed["position"]
@@ -511,7 +522,7 @@ class VideoTools:
                         "  - Linux:  sudo apt install ffmpeg")
 
             # --- 3. Extraer audio + normalizar volumen (clave para whisper con audio bajo) ---
-            audio_path = "_automyx_temp_audio.wav"
+            audio_path = f"_automyx_audio_{os.urandom(4).hex()}.wav"
             try:
                 af = subprocess.run(
                     [ffmpeg_bin, "-y", "-i", input_path, "-vn",
@@ -578,7 +589,7 @@ class VideoTools:
             )
 
             # --- 6. Generar contenido ASS ---
-            ass_path = "_automyx_temp_subs.ass"
+            ass_path = f"_automyx_subs_{os.urandom(4).hex()}.ass"
 
             def _fmt(t: float) -> str:
                 h = int(t // 3600); m = int((t % 3600) // 60)
@@ -634,9 +645,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     _w, _h = int(_parts[0]), int(_parts[1])
             except Exception:
                 pass
+            # Convertir a ruta absoluta para evitar problemas con CWD de ffmpeg.
+            # En Windows, las rutas con : (drive letter) DEBEN escaparse en el filtro
+            # de ffmpeg con comillas simples, sino el parser interpreta los ':' como
+            # separadores de opciones.
+            abs_ass_path = os.path.abspath(ass_path).replace('\\', '/')
+            safe_ass = "'" + abs_ass_path + "'"
             cmd = [
                 ffmpeg_bin, "-y", "-i", input_path,
-                "-vf", f"subtitles={ass_path}:original_size={_w}x{_h}",
+                "-vf", f"subtitles={safe_ass}:original_size={_w}x{_h}",
                 "-c:a", "aac", "-b:a", "128k",
                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
                 "-movflags", "+faststart",
@@ -680,6 +697,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         language: str = "es",
         style: str = "hype",
         position: str = "center",
+        output_ass_path: Optional[str] = None,
         **overrides
     ) -> str:
         """Genera archivo ASS de subtítulos con Whisper (sin quemar en vídeo)."""
@@ -696,9 +714,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if not os.path.exists(input_path):
                 return ""
 
-            # Extraer audio
-            audio_path = "_automyx_temp_audio.wav"
+            ass_path = output_ass_path or f"_automyx_subs_{os.urandom(4).hex()}.ass"
+            audio_path = f"_automyx_audio_{os.urandom(4).hex()}.wav"
             ffmpeg_bin = "ffmpeg"
+
             af = subprocess.run(
                 [ffmpeg_bin, "-y", "-i", input_path, "-vn",
                  "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
@@ -706,14 +725,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 capture_output=True, text=True, timeout=120,
             )
             if af.returncode != 0:
+                for _p in (audio_path, ass_path):
+                    try: os.remove(_p)
+                    except Exception: pass
                 return ""
 
-            # Transcribir con Whisper
             try:
                 import whisper
                 model = whisper.load_model("small")
                 result = model.transcribe(audio_path, language=language, word_timestamps=True)
             except Exception:
+                for _p in (audio_path, ass_path):
+                    try: os.remove(_p)
+                    except Exception: pass
                 return ""
             finally:
                 if os.path.exists(audio_path):
@@ -723,7 +747,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if not result.get('segments'):
                 return ""
 
-            # Construir preset
             preset = get_preset(style)
             position = VideoTools._normalize_position(position)
             ass_overrides = {
@@ -743,9 +766,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             karaoke_mode = bool(preset.get("karaoke")) and result.get("segments") and any(
                 seg.get("words") for seg in result["segments"]
             )
-
-            # Generar ASS
-            ass_path = "_automyx_temp_subs.ass"
 
             def _fmt(t: float) -> str:
                 h = int(t // 3600); m = int((t % 3600) // 60)
@@ -1068,22 +1088,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                         else:
                             log_lines.append(f"   ⚠️ Effect '{eff_l}' falló: {zm_res[:120]}")
 
-            # ---- 5. auto_subtitles (Whisper → genera ASS, NO quema aún) ----
+            # ---- 5. auto_subtitles (Whisper → genera ASS en tmp_dir, NO quema aún) ----
             ass_subtitle_path = None
             if auto_subtitles:
                 try:
-                    # Generar ASS sin quemar (nueva función interna)
+                    ass_output = str(tmp_dir / f"subs_{os.urandom(4).hex()}.ass")
                     ass_subtitle_path = VideoTools._generate_ass_subtitles(
                         input_path=current,
                         language=language,
                         style=subtitle_style.get("style", "hype"),
                         position=subtitle_style.get("position", "center"),
+                        output_ass_path=ass_output,
                         **{k: v for k, v in subtitle_style.items() if k not in ("style", "position")}
                     )
                     if ass_subtitle_path and os.path.exists(ass_subtitle_path):
                         log_lines.append("   💬 Subtítulos generados (ASS), se quemarán en render final")
                     else:
-                        log_lines.append(f"   ⚠️ No se pudo generar ASS: {ass_subtitle_path}")
+                        log_lines.append(f"   ⚠️ No se pudo generar ASS")
                         ass_subtitle_path = None
                 except Exception as e:
                     log_lines.append(f"   ⚠️ auto_subtitles excepción: {e}")
@@ -1158,8 +1179,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
             # Añadir subtítulos ASS al final (después de scale para que se vean en 9:16)
             if ass_subtitle_path and os.path.exists(ass_subtitle_path):
-                safe_ass = ass_subtitle_path.replace('\\', '/').replace(':', '\\:')
-                v_filters.append(f"ass={safe_ass}")
+                # Usar ruta absoluta y escapar con comillas simples (necesario en Windows
+                # para rutas con drive letter tipo C:\... donde : se interpreta como
+                # separador de opción en ffmpeg).
+                abs_ass_path = os.path.abspath(ass_subtitle_path).replace('\\', '/')
+                safe_ass = "'" + abs_ass_path + "'"
+                v_filters.append(f"subtitles={safe_ass}")
+                log_lines.append(f"   💬 Subtítulos: {abs_ass_path}")
 
             # ---- 9. Truncar a max_duration_s si se especificó ----
             t_input_flags = ["-y", "-i", current]
@@ -1209,6 +1235,217 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return f"❌ Error en advanced_video_editor: {type(e).__name__}: {e}"
         finally:
             lock.release()
+
+    @staticmethod
+    def export_for_platform(input_path: str, platform: str, output_path: str = "") -> str:
+        """
+        Exporta el video optimizado para una plataforma específica.
+        Plataformas: tiktok, reels, shorts, youtube, instagram, twitter, linkedin, podcast
+        """
+        SPECS = {
+            "tiktok":    {"size": "1080:1920", "crf": "20", "abr": "160k", "fps": "30", "max_s": "180"},
+            "reels":     {"size": "1080:1920", "crf": "20", "abr": "160k", "fps": "30", "max_s": "90"},
+            "shorts":    {"size": "1080:1920", "crf": "20", "abr": "160k", "fps": "60", "max_s": "60"},
+            "youtube":   {"size": "1920:1080", "crf": "18", "abr": "192k", "fps": "60", "max_s": "0"},
+            "instagram": {"size": "1080:1080", "crf": "20", "abr": "160k", "fps": "30", "max_s": "60"},
+            "twitter":   {"size": "1280:720",  "crf": "22", "abr": "128k", "fps": "30", "max_s": "140"},
+            "linkedin":  {"size": "1920:1080", "crf": "20", "abr": "160k", "fps": "30", "max_s": "600"},
+            "podcast":   {"size": "1280:720",  "crf": "24", "abr": "192k", "fps": "30", "max_s": "0"},
+        }
+        input_path = PCTools._resolve_path(input_path)
+        if not os.path.exists(input_path):
+            return f"❌ No se encontró: {input_path}"
+        spec = SPECS.get(platform.lower().strip(), SPECS["youtube"])
+        if not output_path:
+            stem = Path(input_path).stem
+            output_path = str(Path(input_path).parent / f"{stem}_{platform}.mp4")
+        output_path = VideoTools._prepare_output_path(output_path)
+        vf = f"scale={spec['size']}:force_original_aspect_ratio=decrease,pad={spec['size']}:(ow-iw)/2:(oh-ih)/2"
+        cmd = ["ffmpeg", "-y", "-i", input_path]
+        if spec["max_s"] != "0":
+            cmd += ["-t", spec["max_s"]]
+        cmd += [
+            "-vf", vf,
+            "-r", spec["fps"],
+            "-c:v", "libx264", "-preset", "slow", "-crf", spec["crf"],
+            "-c:a", "aac", "-b:a", spec["abr"],
+            "-movflags", "+faststart",
+            output_path,
+        ]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            if r.returncode == 0:
+                size_mb = os.path.getsize(output_path) / (1024 * 1024)
+                return (f"✅ Exportado para {platform.upper()}\n"
+                        f"   Resolución: {spec['size'].replace(':', 'x')} · FPS: {spec['fps']}\n"
+                        f"   Audio: {spec['abr']} · CRF: {spec['crf']}\n"
+                        f"   Archivo: {output_path} ({size_mb:.1f} MB)")
+            return f"❌ Error exportando: {r.stderr[-400:]}"
+        except subprocess.TimeoutExpired:
+            return "❌ Timeout exportando (>600s)"
+        except Exception as e:
+            return f"❌ {type(e).__name__}: {e}"
+
+    @staticmethod
+    def generate_thumbnail(input_path: str, output_path: str = "", timestamp: str = "00:00:03", width: int = 1280) -> str:
+        """Extrae un frame del video como thumbnail JPG de alta calidad."""
+        input_path = PCTools._resolve_path(input_path)
+        if not os.path.exists(input_path):
+            return f"❌ No se encontró: {input_path}"
+        if not output_path:
+            output_path = str(Path(input_path).with_suffix(".thumb.jpg"))
+        output_path = VideoTools._prepare_output_path(output_path)
+        cmd = [
+            "ffmpeg", "-y", "-ss", timestamp, "-i", input_path,
+            "-vframes", "1", "-vf", f"scale={width}:-1",
+            "-q:v", "2", output_path,
+        ]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if r.returncode == 0 and os.path.exists(output_path):
+                size_kb = os.path.getsize(output_path) / 1024
+                return f"✅ Thumbnail generado: {output_path} ({size_kb:.0f} KB)"
+            return f"❌ Error generando thumbnail: {r.stderr[-300:]}"
+        except Exception as e:
+            return f"❌ {type(e).__name__}: {e}"
+
+    @staticmethod
+    def add_text_overlay(
+        input_path: str,
+        text: str,
+        output_path: str = "",
+        font_size: int = 72,
+        color: str = "white",
+        position: str = "bottom",
+        start_time: float = 0.0,
+        end_time: float = 5.0,
+        box: bool = True,
+    ) -> str:
+        """
+        Agrega texto superpuesto al video (título, hook, watermark).
+        Position: top | center | bottom
+        """
+        input_path = PCTools._resolve_path(input_path)
+        if not os.path.exists(input_path):
+            return f"❌ No se encontró: {input_path}"
+        if not output_path:
+            stem = Path(input_path).stem
+            output_path = str(Path(input_path).parent / f"{stem}_text.mp4")
+        output_path = VideoTools._prepare_output_path(output_path)
+        pos_map = {
+            "top":    f"x=(w-text_w)/2:y=80",
+            "center": f"x=(w-text_w)/2:y=(h-text_h)/2",
+            "bottom": f"x=(w-text_w)/2:y=h-text_h-80",
+        }
+        xy = pos_map.get(position.lower(), pos_map["bottom"])
+        box_str = ":box=1:boxcolor=black@0.5:boxborderw=12" if box else ""
+        escaped = text.replace("'", "\\'").replace(":", "\\:")
+        enable = f"between(t\\,{start_time}\\,{end_time})"
+        drawtext = (
+            f"drawtext=text='{escaped}':fontsize={font_size}:fontcolor={color}"
+            f":font='Arial'{box_str}:{xy}:enable='{enable}'"
+        )
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-vf", drawtext,
+            "-c:a", "copy",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            output_path,
+        ]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if r.returncode == 0:
+                return f"✅ Texto '{text[:30]}...' añadido · {output_path}"
+            return f"❌ Error: {r.stderr[-300:]}"
+        except Exception as e:
+            return f"❌ {type(e).__name__}: {e}"
+
+    @staticmethod
+    def extract_audio(input_path: str, output_path: str = "", format: str = "mp3", quality: str = "high") -> str:
+        """Extrae el audio de un video. Formatos: mp3, wav, aac, flac. Calidad: high/medium/low"""
+        input_path = PCTools._resolve_path(input_path)
+        if not os.path.exists(input_path):
+            return f"❌ No se encontró: {input_path}"
+        if not output_path:
+            output_path = str(Path(input_path).with_suffix(f".{format}"))
+        output_path = VideoTools._prepare_output_path(output_path)
+        bitrates = {"high": "320k", "medium": "192k", "low": "128k"}
+        abr = bitrates.get(quality, "192k")
+        codec_map = {"mp3": "libmp3lame", "aac": "aac", "wav": "pcm_s16le", "flac": "flac"}
+        codec = codec_map.get(format, "libmp3lame")
+        cmd = ["ffmpeg", "-y", "-i", input_path, "-vn", "-acodec", codec]
+        if format not in ("wav", "flac"):
+            cmd += ["-b:a", abr]
+        cmd.append(output_path)
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if r.returncode == 0:
+                size_mb = os.path.getsize(output_path) / (1024 * 1024)
+                return f"✅ Audio extraído ({format.upper()} · {abr}): {output_path} ({size_mb:.1f} MB)"
+            return f"❌ Error extrayendo audio: {r.stderr[-300:]}"
+        except Exception as e:
+            return f"❌ {type(e).__name__}: {e}"
+
+    @staticmethod
+    def speed_ramp(input_path: str, output_path: str = "", segments: list = None) -> str:
+        """
+        Aplica speed ramp: diferentes velocidades en diferentes segmentos del video.
+        segments = [{"start": 0, "end": 5, "speed": 0.5}, {"start": 5, "end": 10, "speed": 2.0}, ...]
+        Si segments es None, aplica slow-motion 0.5x en primera mitad y 2x en segunda.
+        """
+        input_path = PCTools._resolve_path(input_path)
+        if not os.path.exists(input_path):
+            return f"❌ No se encontró: {input_path}"
+        if not output_path:
+            stem = Path(input_path).stem
+            output_path = str(Path(input_path).parent / f"{stem}_ramp.mp4")
+        output_path = VideoTools._prepare_output_path(output_path)
+
+        if not segments:
+            try:
+                probe = subprocess.run(
+                    ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", input_path],
+                    capture_output=True, text=True, timeout=10,
+                )
+                dur = float(probe.stdout.strip() or "10")
+            except Exception:
+                dur = 10.0
+            mid = dur / 2
+            segments = [
+                {"start": 0,   "end": mid, "speed": 0.5},
+                {"start": mid, "end": dur, "speed": 2.0},
+            ]
+
+        pts_parts = []
+        atempo_parts = []
+        for seg in segments:
+            sp = float(seg.get("speed", 1.0))
+            st = float(seg.get("start", 0))
+            en = float(seg.get("end", 999))
+            pts_parts.append(
+                f"if(between(t,{st},{en}),{1/sp}*PTS,PTS)"
+            )
+            atempo_val = max(0.5, min(2.0, sp))
+            atempo_parts.append(f"atempo={atempo_val}")
+
+        vf = f"setpts={pts_parts[0]}" if len(pts_parts) == 1 else "setpts=PTS"
+        af = ",".join(atempo_parts[:1]) if atempo_parts else "anull"
+
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-vf", vf, "-af", af,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-c:a", "aac", "-b:a", "160k",
+            output_path,
+        ]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if r.returncode == 0:
+                return f"✅ Speed ramp aplicado ({len(segments)} segmentos): {output_path}"
+            return f"❌ Error en speed ramp: {r.stderr[-300:]}"
+        except Exception as e:
+            return f"❌ {type(e).__name__}: {e}"
 
     @staticmethod
     def analyze_video_content(input_path: str) -> str:

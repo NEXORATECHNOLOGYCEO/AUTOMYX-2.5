@@ -189,6 +189,7 @@ def _step_2_model() -> Dict[str, str]:
         "NVIDIA: openai/gpt-oss-120b  (gratis vía API pública)",
         "NVIDIA: zai-org/GLM-4.6  (gratis)",
         "NVIDIA: deepseek-ai/deepseek-v3.1  (gratis)",
+        "NVIDIA: moonshotai/kimi-k2.6  (gratis)",
         "OpenAI: gpt-4o  (requiere API key)",
         "Anthropic: claude-3-5-sonnet  (requiere API key)",
         "Google: gemini-2.0-flash  (requiere API key)",

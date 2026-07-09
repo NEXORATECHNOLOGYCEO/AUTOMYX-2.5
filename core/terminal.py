@@ -546,7 +546,7 @@ def tool_executing(name: str, args: Dict[str, Any]) -> None:
                 safe_v = _rich_escape(repr(v)[:60])
                 safe_args_parts.append(f"[dim]{safe_k}[/dim]=[{BRAND_YELLOW}]{safe_v}[/{BRAND_YELLOW}]")
             args_str = ", ".join(safe_args_parts)
-            console.print(f"  [{BRAND_MAGENTA}]▶[/]  [bold]{safe_name}[/bold]({args_str})")
+            console.print(f"  [#00D4AA]▶[/]  [bold #00D4AA]{safe_name}[/bold](#00AAFF)({args_str})")
         except Exception:
             _print_fallback(f"  ▶ {name}({args})")
     else:
@@ -557,11 +557,11 @@ def tool_result(name: str, ok: bool, summary: str = "") -> None:
     """Mensaje 'tool result' estilizado."""
     if RICH_AVAILABLE and console:
         icon = "✓" if ok else "✗"
-        color = BRAND_GREEN if ok else BRAND_RED
+        color = "#00D4AA" if ok else "#FF4444"
         try:
             safe_name = _rich_escape(str(name))
             safe_summary = _rich_escape(str(summary)[:120]) if summary else ""
-            msg = f"  [{color}]{icon}[/]  [bold]{safe_name}[/bold]"
+            msg = f"  [{color}]{icon}[/]  [bold #00D4AA]{safe_name}[/bold]"
             if safe_summary:
                 msg += f"  [dim]→[/dim]  {safe_summary}"
             console.print(msg)
@@ -766,14 +766,19 @@ def render_parallel_groups(groups: list, title: str = "Ejecucion Paralela") -> N
 
 
 # ---------------------------------------------------------------------------
-# Multi-tarea: panel de progreso
+# Multi-tarea: panel de progreso + flow-schema
 # ---------------------------------------------------------------------------
 def multitask_status(tasks: List[Dict[str, Any]]) -> None:
-    """Muestra el estado de múltiples tareas en paralelo."""
+    """Muestra el estado de múltiples tareas en paralelo con flow-schema visual."""
     if not RICH_AVAILABLE or console is None or not tasks:
         return
+    from rich.text import Text
+    from rich.align import Align
+    from rich.layout import Layout
+
+    n = len(tasks)
     table = Table(
-        title=f"[bold {BRAND_MAGENTA}]⚡ Tareas en paralelo ({len(tasks)})[/]",
+        title=f"[bold {BRAND_MAGENTA}]⚡ Tareas en paralelo ({n})[/]",
         box=ROUNDED,
         border_style=BRAND_MAGENTA,
     )
@@ -793,15 +798,68 @@ def multitask_status(tasks: List[Dict[str, Any]]) -> None:
             "pending": BRAND_GRAY, "running": BRAND_CYAN, "streaming": BRAND_MAGENTA,
             "completed": BRAND_GREEN, "failed": BRAND_RED, "cancelled": BRAND_YELLOW,
         }.get(status, "white")
+        prog = int(t.get("progress", 0) * 100)
+        # Mini progress bar en la celda
+        bar_len = 10
+        filled = int(bar_len * prog / 100)
+        bar = "█" * filled + "░" * (bar_len - filled)
         table.add_row(
             str(t.get("task_id", "?"))[:18],
             f"[{color}]{icon} {status}[/]",
             str(t.get("current_phase", ""))[:24],
             str(t.get("current_action", ""))[:36],
             str(len(t.get("tools_used", []))),
-            f"{int(t.get('progress', 0) * 100)}%",
+            f"[{color}]{bar}[/] {prog}%",
         )
     console.print(table)
+
+    # Flow-schema visual: 1 línea por tarea con flecha conectando estados
+    if n >= 1:
+        console.print()
+        console.print(f"[bold {BRAND_CYAN}]📊 Flow-Schema de Tareas[/]")
+        flow_parts = []
+        for i, t in enumerate(tasks[:12]):
+            status = t.get("status", "pending")
+            icon = {
+                "pending": "○", "running": "▶", "streaming": "✦",
+                "completed": "✓", "failed": "✗", "cancelled": "⊘",
+            }.get(status, "•")
+            color = {
+                "pending": BRAND_GRAY, "running": BRAND_CYAN, "streaming": BRAND_MAGENTA,
+                "completed": BRAND_GREEN, "failed": BRAND_RED, "cancelled": BRAND_YELLOW,
+            }.get(status, "white")
+            tid = str(t.get("task_id", "?"))[-8:]
+            flow_parts.append(f"[{color}]{icon}[/]")
+
+        # Conectar tareas con flechas: paralelo = ||, secuencial = →
+        if n == 1:
+            flow_line = "".join(flow_parts)
+        else:
+            parts = []
+            for i, fp in enumerate(flow_parts):
+                parts.append(fp)
+                if i < len(flow_parts) - 1:
+                    # Si ambas tareas están en running, conectar como paralelo (⇉)
+                    if (tasks[i].get("status") in ("running", "streaming") and
+                            tasks[i+1].get("status") in ("running", "streaming")):
+                        parts.append(f"[{BRAND_CYAN}]⇉[/{BRAND_CYAN}]")
+                    else:
+                        parts.append(f"[{BRAND_GRAY}]→[/{BRAND_GRAY}]")
+            flow_line = " ".join(parts)
+
+        flow_text = Text.from_markup(flow_line)
+        console.print(Align.center(flow_text))
+
+        # Leyenda compacta
+        legend = (
+            f"[{BRAND_GRAY}]○ pending  "
+            f"[{BRAND_CYAN}]▶ running  "
+            f"[{BRAND_MAGENTA}]✦ streaming  "
+            f"[{BRAND_GREEN}]✓ completed  "
+            f"[{BRAND_RED}]✗ failed  "
+            f"[{BRAND_YELLOW}]⊘ cancelled[/]"
+        )
+        console.print(Align.center(legend))
 
 
 # ---------------------------------------------------------------------------

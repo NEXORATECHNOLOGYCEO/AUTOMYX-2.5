@@ -72,3 +72,12 @@ state/opencode_sessions/
 state/.automix/
 skills_cache/
 
+aumformbring_data/  
+nexus_data/  
+*.db  
+*.sqlite  
+.env  
+.env.*  
+*.key  
+*.pem  
+secrets/  

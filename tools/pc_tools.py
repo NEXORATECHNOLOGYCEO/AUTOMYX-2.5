@@ -87,14 +87,26 @@ class PCTools:
                 or kwargs.get('name')
                 or kwargs.get('destination')
             )
-            content = (
-                kwargs.get('content')
-                or kwargs.get('text')
-                or kwargs.get('data')
-                or kwargs.get('body')
-                or kwargs.get('contents')
-                or b""
-            )
+
+            # Buscar content en todos los alias posibles — incluyendo string vacío ""
+            _CONTENT_KEYS = ('content', 'text', 'data', 'body', 'contents')
+            content = None
+            for _k in _CONTENT_KEYS:
+                if _k in kwargs:
+                    content = kwargs[_k]
+                    break
+            if content is None:
+                content = ""
+
+            # Si content es dict/list (la IA lo mandó como objeto), convertir a JSON
+            if isinstance(content, (dict, list)):
+                import json as _json
+                content = _json.dumps(content, ensure_ascii=False, indent=2)
+
+            # Si content es int/float, convertir a str
+            if not isinstance(content, (str, bytes)):
+                content = str(content)
+
             if not file_path:
                 return ("❌ Error en write_file: falta el argumento 'file_path'. "
                         "Formato JSON requerido: {\"action\": \"write_file\", "
@@ -114,7 +126,8 @@ class PCTools:
 
             # Crear los directorios padre si no existen
             dir_name = os.path.dirname(file_path)
-            os.makedirs(dir_name, exist_ok=True)
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
             
             # Detectar si es un archivo binario (por extensión) o si el contenido es bytes
             binary_extensions = ['.pdf', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.zip', '.rar', '.exe', '.dll', '.bin']
@@ -305,26 +318,328 @@ class PCTools:
     @staticmethod
     def execute_cmd(**kwargs) -> str:
         """Ejecuta un comando en la terminal local y devuelve la salida.
-        Usa background=True para procesos de larga duración (ej: servidores web)."""
+        Usa background=True para procesos de larga duración (ej: servidores web).
+
+        Args:
+            command/cmd: Comando a ejecutar
+            background: True para ejecutar en segundo plano (servidores, daemons)
+            timeout_seconds: Timeout personalizado (default auto-detectado)
+        """
+        import re as _re
         command = kwargs.get('command') or kwargs.get('cmd')
         background = kwargs.get('background', False) or kwargs.get('detached', False)
+        custom_timeout = kwargs.get('timeout_seconds') or kwargs.get('timeout')
         if not command:
             return "❌ Error: Se requiere el parámetro 'command' o 'cmd'."
+
+        cmd_lower = command.lower()
+
+        # ── Auto-detectar comandos de servidor/daemon que bloquearían para siempre ──
+        _SERVER_PATTERNS = [
+            r'\bnode\s+\S+\.(?:js|mjs)\b',   # node server.js
+            r'\bnodemon\b', r'\bts-node\b',
+            r'\bnpm\s+(start|run\s+(dev|start|serve|watch))\b',
+            r'\byarn\s+(start|dev|serve)\b',
+            r'\bpython[3]?\s+(?:(?:-m\s+)?flask|(?:-m\s+)?uvicorn|(?:-m\s+)?gunicorn)\b',
+            r'\bpython[3]?\s+\S+\.py\b.*?(--?(host|port|reload|bind)\b)',
+            r'\buvicorn\b', r'\bgunicorn\b', r'\bdaphne\b',
+            r'\bruby\s+(?:bin/)?rails\b', r'\bphp\s+-S\b',
+            r'\bpython[3]?\s+-m\s+http\.server\b',
+            r'\bdocker\s+run\b(?!.*?-d\b)',  # docker run sin -d
+        ]
+        is_server = not background and any(_re.search(p, cmd_lower) for p in _SERVER_PATTERNS)
+
+        # ── Si el comando encadena instalador + servidor, separar automáticamente ──
+        if is_server and ('&&' in command or '||' in command):
+            parts = [p.strip() for p in _re.split(r'&&|\|\|', command)]
+            server_idx = None
+            for i, part in enumerate(parts):
+                part_low = part.lower()
+                if any(_re.search(p, part_low) for p in _SERVER_PATTERNS):
+                    server_idx = i
+                    break
+            if server_idx is not None and server_idx > 0:
+                pre_cmd  = ' && '.join(parts[:server_idx])
+                srv_cmd  = ' && '.join(parts[server_idx:])
+                # Ejecutar la parte instaladora primero (bloqueante con timeout largo)
+                try:
+                    _install_to = 180
+                    pre_result = subprocess.run(
+                        pre_cmd, shell=True, capture_output=True, text=True, timeout=_install_to
+                    )
+                    pre_out = (pre_result.stdout or pre_result.stderr or "").strip()[-500:]
+                except subprocess.TimeoutExpired:
+                    pre_out = f"⚠️ Timeout en paso previo ({_install_to}s)"
+                except Exception as e:
+                    pre_out = f"⚠️ Error en paso previo: {e}"
+                # Luego lanzar el servidor en background
+                subprocess.Popen(srv_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                port_match = _re.search(r':(\d{4,5})', command)
+                port_hint  = f" (puerto {port_match.group(1)})" if port_match else ""
+                return (
+                    f"✅ Instalación completada. Servidor iniciado en background{port_hint}.\n"
+                    f"[Pre-pasos]: {pre_out[:300] or '(sin output)'}\n"
+                    f"[Servidor bg]: {srv_cmd}"
+                )
+
+        if is_server:
+            # Comando de servidor directo → forzar background
+            subprocess.Popen(command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            port_match = _re.search(r':?(\d{4,5})', command)
+            port_hint  = f" en puerto {port_match.group(1)}" if port_match else ""
+            return f"✅ Servidor iniciado en background{port_hint}: {command[:120]}"
+
+        if background:
+            subprocess.Popen(command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return f"✅ Comando iniciado en segundo plano: {command}"
+
+        # ── Timeout adaptativo según tipo de comando ──
+        _LONG_PATTERNS = [
+            'npm install', 'npm i ', 'yarn install', 'yarn add',
+            'pip install', 'pip3 install', 'poetry install',
+            'composer install', 'bundle install',
+            'cargo build', 'go build', 'mvn package', 'gradle build',
+            'apt-get install', 'apt install', 'brew install',
+        ]
+        if custom_timeout:
+            timeout = int(custom_timeout)
+        elif any(p in cmd_lower for p in _LONG_PATTERNS):
+            timeout = 180
+        else:
+            timeout = 45
+
         try:
-            if background:
-                # Ejecutar en segundo plano
-                subprocess.Popen(
-                    command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
-                return f"✅ Comando iniciado en segundo plano: {command}"
-            else:
-                # Ejecutar normalmente y esperar resultado
-                result = subprocess.run(
-                    command, shell=True, capture_output=True, text=True, timeout=30
-                )
-                return result.stdout if result.stdout else result.stderr
+            result = subprocess.run(
+                command, shell=True, capture_output=True, text=True, timeout=timeout
+            )
+            out = result.stdout or ""
+            err = result.stderr or ""
+            combined = (out + err).strip()
+            if not combined:
+                return f"✅ Comando ejecutado (sin output). Exit code: {result.returncode}"
+            return combined
+        except subprocess.TimeoutExpired:
+            return f"⏱️ Timeout ({timeout}s) — el comando tardó demasiado. Si es un servidor, usa background=true."
         except Exception as e:
             return f"Error ejecutando comando: {str(e)}"
+
+    @staticmethod
+    def check_port(**kwargs) -> str:
+        """Verifica si un puerto está en uso y devuelve el PID del proceso."""
+        import re as _re
+        port = kwargs.get("port") or kwargs.get("number")
+        if not port:
+            return "❌ Error: Se requiere el parámetro 'port'."
+        try:
+            port = int(port)
+            result = subprocess.run(
+                f"netstat -ano | findstr :{port}",
+                shell=True, capture_output=True, text=True, timeout=10
+            )
+            lines = [l for l in result.stdout.splitlines() if f":{port}" in l]
+            if not lines:
+                return f"✅ Puerto {port} está LIBRE (ningún proceso lo usa)."
+            pid_set = set()
+            for l in lines:
+                parts = l.split()
+                if parts:
+                    pid_set.add(parts[-1])
+            state = "LISTENING" if any("LISTEN" in l for l in lines) else "EN USO"
+            return f"🔴 Puerto {port} está {state}. PIDs: {', '.join(pid_set)}\n" + "\n".join(lines[:6])
+        except Exception as e:
+            return f"Error verificando puerto: {e}"
+
+    @staticmethod
+    def kill_port(**kwargs) -> str:
+        """Termina el proceso que está usando un puerto específico."""
+        port = kwargs.get("port") or kwargs.get("number")
+        if not port:
+            return "❌ Error: Se requiere el parámetro 'port'."
+        try:
+            port = int(port)
+            result = subprocess.run(
+                f"for /f \"tokens=5\" %a in ('netstat -ano ^| findstr :{port}') do taskkill /F /PID %a",
+                shell=True, capture_output=True, text=True, timeout=15
+            )
+            if result.returncode == 0:
+                return f"✅ Proceso en puerto {port} terminado."
+            return result.stdout or result.stderr or f"No se encontró proceso en puerto {port}."
+        except Exception as e:
+            return f"Error terminando proceso: {e}"
+
+    @staticmethod
+    def wait_for_server(**kwargs) -> str:
+        """Espera hasta que un servidor HTTP responda (máx 30s). Útil después de iniciar en background."""
+        import urllib.request
+        import time as _t
+        url     = kwargs.get("url") or kwargs.get("endpoint")
+        timeout = int(kwargs.get("timeout_seconds") or kwargs.get("timeout") or 30)
+        if not url:
+            return "❌ Error: Se requiere el parámetro 'url'."
+        start = _t.time()
+        last_err = ""
+        while _t.time() - start < timeout:
+            try:
+                with urllib.request.urlopen(url, timeout=2) as r:
+                    if r.status < 500:
+                        elapsed = int(_t.time() - start)
+                        return f"✅ Servidor disponible en {url} ({elapsed}s). HTTP {r.status}"
+            except Exception as e:
+                last_err = str(e)
+            _t.sleep(1)
+        return f"⏱️ Timeout ({timeout}s) — el servidor en {url} no respondió. Último error: {last_err}"
+
+    @staticmethod
+    def npm_run(**kwargs) -> str:
+        """Ejecuta un script npm (ej. npm install, npm run build). Timeout largo por defecto."""
+        script  = kwargs.get("script") or kwargs.get("command") or "install"
+        cwd     = kwargs.get("cwd") or kwargs.get("dir") or kwargs.get("path") or "."
+        timeout = int(kwargs.get("timeout_seconds") or 180)
+        is_server_script = any(s in script.lower() for s in ["start", "dev", "serve", "watch"])
+        try:
+            full_cmd = f"npm {script}"
+            if is_server_script:
+                subprocess.Popen(full_cmd, shell=True, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return f"✅ npm {script} iniciado en background en '{cwd}'"
+            result = subprocess.run(
+                full_cmd, shell=True, cwd=cwd,
+                capture_output=True, text=True, timeout=timeout
+            )
+            out = (result.stdout or result.stderr or "").strip()
+            return out[-1500:] or f"✅ npm {script} completado (sin output). Exit: {result.returncode}"
+        except subprocess.TimeoutExpired:
+            return f"⏱️ Timeout ({timeout}s) ejecutando npm {script}"
+        except Exception as e:
+            return f"Error en npm {script}: {e}"
+
+    @staticmethod
+    def run_python(**kwargs) -> str:
+        """Ejecuta un script Python y devuelve su output. Para servidores usa background=True."""
+        import re as _re
+        script  = kwargs.get("script") or kwargs.get("file") or kwargs.get("path")
+        args    = kwargs.get("args") or ""
+        cwd     = kwargs.get("cwd") or kwargs.get("dir") or "."
+        bg      = kwargs.get("background") or kwargs.get("detached") or False
+        timeout = int(kwargs.get("timeout_seconds") or 60)
+        if not script:
+            return "❌ Error: Se requiere 'script' o 'file'."
+        cmd = f"python {script} {args}".strip()
+        try:
+            if bg:
+                subprocess.Popen(cmd, shell=True, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return f"✅ {cmd} iniciado en background en '{cwd}'"
+            result = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+            out = (result.stdout or result.stderr or "").strip()
+            return out[-1500:] or f"✅ {cmd} completado. Exit: {result.returncode}"
+        except subprocess.TimeoutExpired:
+            return f"⏱️ Timeout ({timeout}s). Si es un servidor usa background=true."
+        except Exception as e:
+            return f"Error ejecutando script: {e}"
+
+    @staticmethod
+    def open_browser(**kwargs) -> str:
+        """Abre una URL en el navegador predeterminado."""
+        import webbrowser
+        url = kwargs.get("url") or kwargs.get("href")
+        if not url:
+            return "❌ Error: Se requiere el parámetro 'url'."
+        try:
+            webbrowser.open(url)
+            return f"✅ Abierto en navegador: {url}"
+        except Exception as e:
+            return f"Error abriendo navegador: {e}"
+
+    @staticmethod
+    def get_system_info(**kwargs) -> str:
+        """Devuelve versiones de Node, Python, npm, git, pip instalados en el sistema."""
+        tools_check = [
+            ("python --version", "Python"),
+            ("node --version",   "Node.js"),
+            ("npm --version",    "npm"),
+            ("git --version",    "Git"),
+            ("pip --version",    "pip"),
+        ]
+        results = []
+        for cmd, label in tools_check:
+            try:
+                r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
+                ver = (r.stdout or r.stderr or "").strip().split("\n")[0]
+                results.append(f"  ✓ {label}: {ver}" if ver else f"  · {label}: no encontrado")
+            except Exception:
+                results.append(f"  · {label}: no disponible")
+        return "Sistema:\n" + "\n".join(results)
+
+    @staticmethod
+    def find_in_files(**kwargs) -> str:
+        """Busca texto en archivos de un directorio (como grep). Devuelve coincidencias con línea y archivo."""
+        import re as _re
+        query   = kwargs.get("query") or kwargs.get("text") or kwargs.get("pattern")
+        path    = kwargs.get("path") or kwargs.get("dir") or "."
+        ext     = kwargs.get("ext") or kwargs.get("extension") or ""
+        if not query:
+            return "❌ Error: Se requiere el parámetro 'query'."
+        try:
+            from pathlib import Path as _P
+            results = []
+            base = _P(path)
+            pattern = f"**/*{ext}" if ext else "**/*"
+            for f in list(base.glob(pattern))[:200]:
+                if not f.is_file():
+                    continue
+                try:
+                    text = f.read_text(encoding="utf-8", errors="replace")
+                    for i, line in enumerate(text.splitlines(), 1):
+                        if query.lower() in line.lower():
+                            results.append(f"{f}:{i}: {line.strip()[:120]}")
+                            if len(results) >= 40:
+                                break
+                except Exception:
+                    pass
+                if len(results) >= 40:
+                    break
+            if not results:
+                return f"Sin resultados para '{query}' en {path}"
+            return f"Encontrado '{query}' en {len(results)} líneas:\n" + "\n".join(results[:40])
+        except Exception as e:
+            return f"Error buscando: {e}"
+
+    @staticmethod
+    def download_file(**kwargs) -> str:
+        """Descarga un archivo desde una URL y lo guarda en el disco."""
+        import urllib.request
+        import os as _os
+        url   = kwargs.get("url") or kwargs.get("href")
+        dest  = kwargs.get("dest") or kwargs.get("path") or kwargs.get("file")
+        if not url:
+            return "❌ Error: Se requiere el parámetro 'url'."
+        if not dest:
+            dest = _os.path.basename(url.split("?")[0]) or "download"
+        try:
+            urllib.request.urlretrieve(url, dest)
+            size = _os.path.getsize(dest)
+            return f"✅ Descargado: {dest} ({size:,} bytes)"
+        except Exception as e:
+            return f"Error descargando {url}: {e}"
+
+    @staticmethod
+    def get_running_processes(**kwargs) -> str:
+        """Lista procesos en ejecución. Filtra por nombre si se proporciona 'name'."""
+        name = kwargs.get("name") or kwargs.get("filter") or ""
+        try:
+            if name:
+                result = subprocess.run(
+                    f"tasklist /fi \"IMAGENAME eq {name}*\"",
+                    shell=True, capture_output=True, text=True, timeout=10
+                )
+            else:
+                result = subprocess.run(
+                    "tasklist /fo TABLE /nh",
+                    shell=True, capture_output=True, text=True, timeout=10
+                )
+            out = (result.stdout or "").strip()
+            return out[:2000] or "Sin procesos encontrados."
+        except Exception as e:
+            return f"Error listando procesos: {e}"
 
     @staticmethod
     def open_program(**kwargs) -> str:

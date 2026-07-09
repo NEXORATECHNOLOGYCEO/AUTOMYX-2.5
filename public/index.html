@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AUTOMYX - Agente IA Omnipotente</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+        }
+        .container {
+            text-align: center;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 50px;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            max-width: 600px;
+        }
+        h1 {
+            font-size: 3em;
+            margin-bottom: 20px;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+        }
+        .logo {
+            font-size: 4em;
+            margin-bottom: 20px;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+        p {
+            font-size: 1.2em;
+            margin: 15px 0;
+            line-height: 1.6;
+        }
+        .status {
+            background: rgba(76, 175, 80, 0.3);
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 30px;
+            border-left: 5px solid #4caf50;
+        }
+        .api-test {
+            margin-top: 30px;
+            padding: 20px;
+            background: rgba(33, 150, 243, 0.2);
+            border-radius: 10px;
+        }
+        button {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            font-size: 1em;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 10px;
+            transition: all 0.3s;
+        }
+        button:hover {
+            background: #1976D2;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+        .response {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+            font-family: 'Courier New', monospace;
+            text-align: left;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">🤖</div>
+        <h1>AUTOMYX</h1>
+        <p><strong>Agente de Inteligencia Artificial Omnipotente</strong></p>
+        <p>Nivel: ⭐⭐⭐⭐⭐ DIOS</p>
+        
+        <div class="status">
+            <p>✅ <strong>Servidor Activo</strong></p>
+            <p>Puerto: <strong>5000</strong></p>
+            <p>Estado: <strong>EN LÍNEA</strong></p>
+        </div>
+
+        <div class="api-test">
+            <p><strong>Prueba el API:</strong></p>
+            <button onclick="testAPI()">🔌 Verificar Estado del Servidor</button>
+            <div id="response" class="response" style="display:none;"></div>
+        </div>
+    </div>
+
+    <script>
+        function testAPI() {
+            fetch('/api/status')
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('response').style.display = 'block';
+                    document.getElementById('response').innerHTML = '<strong>Respuesta del Servidor:</strong><br>' + JSON.stringify(data, null, 2);
+                })
+                .catch(err => {
+                    document.getElementById('response').style.display = 'block';
+                    document.getElementById('response').innerHTML = '<strong>Error:</strong> ' + err.message;
+                });
+        }
+    </script>
+</body>
+</html>
