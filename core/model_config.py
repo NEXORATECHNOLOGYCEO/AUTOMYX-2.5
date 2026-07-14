@@ -435,9 +435,28 @@ OLLAMA_MODELS: Dict[str, Dict[str, Any]] = {
 
 
 # =============================================================================
+# VYREX — modelo propio (Qwen3.6 35B) via API Vyrex (endpoint OpenAI-compatible)
+# base_url: https://vyrexstudio.com/v1  · clave VYREX_API_KEY=vyx_...
+# 2026-07-14: la API Vyrex YA hace streaming SSE (estilo OpenAI, con usage en el
+# chunk final para el cobro por tokens) -> stream=True, respuestas token a token.
+# =============================================================================
+VYREX_MODELS: Dict[str, Dict[str, Any]] = {
+    "vyrex-qwen3.6-35b": {
+        "max_tokens": 4096, "temperature": 0.7, "top_p": 0.95,
+        "stream": True, "vision": False,
+        "description": "Qwen3.6 35B — modelo propio Vyrex/Nexora (via API Vyrex) ★",
+        "use_case": "general", "is_default": False,
+        "cost_in": 0.0, "cost_out": 0.0, "ctx_k": 64,
+        "badge": "VYREX", "provider": "vyrex",
+    },
+}
+
+
+# =============================================================================
 # ALL MODELS COMBINED
 # =============================================================================
 ALL_MODELS: Dict[str, Dict[str, Any]] = {
+    **VYREX_MODELS,
     **ANTHROPIC_MODELS,
     **OPENAI_MODELS,
     **GOOGLE_MODELS,
@@ -451,6 +470,7 @@ ALL_MODELS: Dict[str, Dict[str, Any]] = {
 
 # Agrupación por proveedor para UI (orden: de mayor a menor popularidad en enterprise)
 PROVIDERS_ORDER = [
+    ("Vyrex / Nexora",     "vyrex",     VYREX_MODELS,      "PROPIO · api.vyrexstudio.com"),
     ("Anthropic / Claude", "anthropic", ANTHROPIC_MODELS,  "PAID  · api.anthropic.com"),
     ("OpenAI",             "openai",    OPENAI_MODELS,     "PAID  · platform.openai.com"),
     ("Google Gemini",      "google",    GOOGLE_MODELS,     "PAID  · aistudio.google.com"),
@@ -464,6 +484,7 @@ PROVIDERS_ORDER = [
 
 # API endpoints para cada proveedor (OpenAI-compatible)
 PROVIDER_BASE_URLS: Dict[str, Optional[str]] = {
+    "vyrex":     "https://vyrexstudio.com/v1",
     "anthropic": None,          # usa SDK nativo anthropic
     "openai":    None,          # usa openai oficial
     "google":    "https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -476,6 +497,7 @@ PROVIDER_BASE_URLS: Dict[str, Optional[str]] = {
 
 # Variables de entorno por proveedor
 PROVIDER_ENV_VARS: Dict[str, Optional[str]] = {
+    "vyrex":     "VYREX_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "openai":    "OPENAI_API_KEY",
     "google":    "GOOGLE_API_KEY",
@@ -488,6 +510,7 @@ PROVIDER_ENV_VARS: Dict[str, Optional[str]] = {
 
 # URLs para obtener API keys
 PROVIDER_KEY_URLS: Dict[str, str] = {
+    "vyrex":     "https://vyrexstudio.com/  (Panel → API Vyrex → crear key vyx_)",
     "anthropic": "https://console.anthropic.com/settings/keys",
     "openai":    "https://platform.openai.com/api-keys",
     "google":    "https://aistudio.google.com/app/apikey",

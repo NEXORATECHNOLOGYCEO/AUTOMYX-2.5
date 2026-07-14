@@ -74,7 +74,7 @@ from colorama import Fore, Style
 from core.hardware_detector import hw_config
 from core.skills import SKILLS_REGISTRY
 
-# Sistemas de precisiÃ³n y auto-aprendizaje de errores
+# Sistemas de precisión y auto-aprendizaje de errores
 try:
     from tools.error_learning import ErrorLearningSystem
 except Exception:
@@ -90,7 +90,7 @@ except Exception:
 # TaskCoordinator REMOVIDO: el modelo coordina nativamente
 TaskCoordinator = None
 
-# NÃºcleo nuevo: parser JSON blindado y terminal Rich
+# Núcleo nuevo: parser JSON blindado y terminal Rich
 try:
     from core.json_protocol import parse_response, ParseResult, ToolCall, make_tool_call
     JSON_PROTOCOL_AVAILABLE = True
@@ -175,7 +175,7 @@ def _summarize_result(result: Any) -> str:
             return f"{result['count']} items"
         if "output" in result:
             return f"output: {str(result['output'])[:60]}"
-        # Resumen genÃ©rico
+        # Resumen genérico
         keys = list(result.keys())[:3]
         return "{" + ", ".join(keys) + ("..." if len(result) > 3 else "") + "}"
     if isinstance(result, str):
@@ -537,10 +537,14 @@ class ModelProvider:
     XAI         = "xai"
     MISTRAL_AI  = "mistral"
     DEEPSEEK    = "deepseek"
+    VYREX       = "vyrex"
 
     @staticmethod
     def get_provider(model_name: str) -> str:
         ml = model_name.lower()
+        # Vyrex (modelo propio via API Vyrex) — detectar ANTES que ollama/qwen
+        if ml.startswith("vyrex"):
+            return ModelProvider.VYREX
         # Prefijos explícitos Ollama
         if model_name.startswith("ollama/"):
             return ModelProvider.OLLAMA_LOCAL
@@ -635,6 +639,12 @@ class ModelProvider:
                 logger.warning("DEEPSEEK_API_KEY no configurada")
             return OpenAI(base_url="https://api.deepseek.com/v1", api_key=api_key or "missing-key")
 
+        if provider == ModelProvider.VYREX:
+            api_key = os.getenv("VYREX_API_KEY", "")
+            if not api_key:
+                logger.warning("VYREX_API_KEY no configurada (ponla en el .env: VYREX_API_KEY=vyx_...)")
+            return OpenAI(base_url="https://vyrexstudio.com/v1", api_key=api_key or "missing-key")
+
         if provider == ModelProvider.NVIDIA:
             api_key = os.getenv("NVIDIA_API_KEY", "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")
             try:
@@ -685,7 +695,6 @@ class AutomyxAgent:
         
         # Cargar el Soul base desde Soul.md (OPTIMIZADO: solo una vez, cacheado)
         try:
-            import os
             soul_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Soul.md")
             with open(soul_path, "r", encoding="utf-8") as f:
                 soul_text = f.read()
@@ -739,6 +748,7 @@ class AutomyxAgent:
         self.history = [{"role": "system", "content": self.system_prompt}]
         self.tools: Dict[str, Callable] = {}
         self._tool_requires: Dict[str, list] = {}
+        self._alias_tool_names: set = set()
         self._conversation_count = 0
 
         # OPTIMIZACION: pre-warm de recursos en background
@@ -962,7 +972,7 @@ class AutomyxAgent:
         Valida un tool call antes de ejecutarlo. Retorna mensaje de error o None si OK.
         """
         if not action or not isinstance(action, str):
-            return f"AcciÃ³n invÃ¡lida (tipo {type(action).__name__})"
+            return f"Acción inválida (tipo {type(action).__name__})"
         if action not in self.tools:
             # Buscar tools similares (fuzzy)
             from difflib import get_close_matches
@@ -1240,7 +1250,8 @@ class AutomyxAgent:
                 result = self.tools["execute_cmd"](command=cmd)
                 return result, "execute_cmd[read_file]"
 
-        available = sorted(self.tools.keys())[:10]
+        _alias_names = getattr(self, "_alias_tool_names", set())
+        available = sorted(n for n in self.tools.keys() if n not in _alias_names)[:10]
         raise ValueError(
             f"Tool '{tool_name}' no disponible. "
             f"Tools registradas ({len(self.tools)}): {available}"
@@ -1427,7 +1438,7 @@ class AutomyxAgent:
         except Exception:
             pass
 
-        # ---- FASE 1: ANALYZING (comprender quÃ© pidiÃ³ el usuario) ----
+        # ---- FASE 1: ANALYZING (comprender qué pidió el usuario) ----
         get_agent_status()["is_active"] = True
         get_agent_status()["user_request"] = user_input
         get_agent_status()["started_at"] = datetime.now().isoformat()
@@ -1467,13 +1478,22 @@ class AutomyxAgent:
             "notion_", "github_", "gh_", "telegram_", "discord_",
             "elevenlabs_", "weather_", "obsidian_", "calendar_", "crypto_",
         )
-        _all_tool_names = sorted(self.tools.keys())
+        # Excluir los ~8000 aliases coloquiales de mega_tools (haz_/hazme_/do_/make_/
+        # run_/ejecuta_X, etc.) de la lista visible: alfabéticamente ahogaban a tools
+        # reales (execute_cmd, write_file, generate_vyrex_video nunca aparecían en los
+        # primeros 200). Los aliases siguen registrados y funcionan si el LLM los usa,
+        # solo no se listan explícitamente en el prompt.
+        _alias_names = getattr(self, "_alias_tool_names", set())
+        _all_tool_names = sorted(n for n in self.tools.keys() if n not in _alias_names)
         _priority = [t for t in _all_tool_names if any(t.startswith(p) for p in _PRIORITY_PREFIXES)]
         _rest     = [t for t in _all_tool_names if t not in set(_priority)]
         _tool_names = _priority + _rest
-        _tool_list  = ", ".join(_tool_names[:200])
-        if len(_tool_names) > 200:
-            _tool_list += f" ... ({len(_tool_names)} total)"
+        # Sin aliases, las tools reales son ~400 (~2000 tokens listadas completas) -- barato
+        # frente al costo de que el LLM no sepa que una tool existe. Tope holgado en 600.
+        _tool_cap = 600
+        _tool_list  = ", ".join(_tool_names[:_tool_cap])
+        if len(_tool_names) > _tool_cap:
+            _tool_list += f" ... ({len(_tool_names)} total, +{len(_alias_names)} aliases coloquiales ocultos)"
 
         _workspace_ctx = ""
         if _WORKSPACE_AVAILABLE and get_workspace_manager is not None:
@@ -1500,10 +1520,22 @@ class AutomyxAgent:
             if _active_integrations else ""
         )
 
+        _os_name_lower = str(self.hw.os_name).lower()
+        _is_windows = "win" in _os_name_lower
+        _shell_hint = (
+            "SHELL: Windows CMD. USA SOLO comandos CMD/PowerShell. "
+            "PROHIBIDO usar bash/linux: grep→findstr, cat→type, ls→dir, tail→nada (usa 'type' o PowerShell Get-Content -Tail N), "
+            "head→PowerShell Get-Content -TotalCount N, touch→echo.>, rm→del, mv→move, cp→copy. "
+            "Para git, python, pip, node: funcionan igual en CMD."
+        ) if _is_windows else (
+            "SHELL: Linux/macOS bash. Puedes usar grep, cat, ls, tail, head, rm, mv, cp normalmente."
+        )
+
         hw_context = (
             f"\n\n[CONTEXTO DEL SISTEMA — LEER ANTES DE RESPONDER]\n"
             f"OS: {self.hw.os_name} | Arch: {self.hw.arch} | "
             f"Dir: {_os.getcwd()} | GPU: {self.hw.gpu_vendor}\n"
+            f"{_shell_hint}\n"
             f"IDENTIDAD CRITICA: Eres un agente que corre 100% LOCAL en el PC del usuario. "
             f"NO eres una IA en la nube. TIENES acceso directo al sistema de archivos, "
             f"puedes ejecutar comandos, leer/escribir archivos y operar el PC sin restricciones. "
@@ -1608,7 +1640,7 @@ class AutomyxAgent:
                 pass
 
             # ---- FASE 2: THINKING (llamar al LLM) ----
-            _set_phase("thinking", f"Pensando cÃ³mo responder (paso {iteration+1})...")
+            _set_phase("thinking", f"Pensando cómo responder (paso {iteration+1})...")
             if TERMINAL_AVAILABLE and term:
                 term.llm_thinking()
 
@@ -1629,9 +1661,9 @@ class AutomyxAgent:
                     # Fast mode: maximo 1024 tokens para tool calls
                     _max_tokens = min(_max_tokens, 1024)
                 else:
-                    # Cap universal: 2048 tokens es suficiente para un plan de 8 pasos.
-                    # Limitar a 4096+ deja al modelo generar 30+ tool calls de golpe.
-                    _max_tokens = min(_max_tokens, 2048)
+                    # 4096 da margen para respuestas largas. El plan-cap (8 tool calls)
+                    # evita que el modelo genere 30+ pasos aunque haya tokens disponibles.
+                    _max_tokens = min(_max_tokens, 4096)
                 # Timeout generoso para NVIDIA API (puede tardar 90-120s en cold start)
                 _timeout = 120
                 # OPTIMIZACION: session headers para affinity con NVIDIA
@@ -1703,9 +1735,17 @@ class AutomyxAgent:
                         pass
 
             except Exception as api_err:
-                _set_phase("error", f"Error con {self.model_name}, reintentando...")
                 api_error = str(api_err)
                 logger.warning(f"[run] API error: {api_err}")
+
+                # 429 rate-limit: esperar antes de reintentar
+                _is_429 = "429" in api_error or "Too Many Requests" in api_error
+                if _is_429:
+                    _set_phase("error", f"Rate limit ({self.model_name}), esperando 8s...")
+                    import time as _t429
+                    _t429.sleep(8)
+                else:
+                    _set_phase("error", f"Error con {self.model_name}, reintentando...")
 
                 # Fallback inteligente según provider:
                 # - Anthropic → reintentar mismo modelo SIN tool schemas (modo texto)
@@ -1736,7 +1776,7 @@ class AutomyxAgent:
                         messages=self.history,
                         temperature=0.3,
                         top_p=0.95,
-                        max_tokens=2048,
+                        max_tokens=4096,
                         stream=False,
                         timeout=90,
                     )
@@ -1787,7 +1827,31 @@ class AutomyxAgent:
                     )})
                     continue  # Forzar otra iteración
 
-                # No hay refusal → es respuesta final legítima
+                # Detectar "promesas sin acción": modelo anuncia qué va a hacer pero no llama herramientas
+                _promise_patterns = [
+                    "voy a leer", "voy a crear", "voy a escribir", "voy a modificar",
+                    "voy a actualizar", "voy a ejecutar", "voy a proceder", "voy a revisar",
+                    "voy a analizar", "voy a cambiar", "voy a reemplazar", "voy a generar",
+                    "voy a hacer", "voy a empezar", "voy a comenzar", "voy a arreglar",
+                    "procederé a", "a continuación voy", "luego voy a", "después voy a",
+                    "ahora voy a", "primero voy a", "comenzaré", "empezaré a",
+                    "el siguiente paso", "paso siguiente", "haré lo siguiente",
+                    "i will now", "let me now", "i'll now", "now i'll",
+                ]
+                _is_promise = any(p in _ai_low for p in _promise_patterns)
+
+                if _is_promise and iteration < max_iterations - 1:
+                    _set_phase("error", "Promesa sin acción — ejecutando herramienta directamente")
+                    self.history.append({"role": "system", "content": (
+                        "⚠️ ERROR: Acabas de ANUNCIAR lo que ibas a hacer sin ejecutar ninguna herramienta. "
+                        "Esto está PROHIBIDO. NUNCA anuncies — actúa de inmediato. "
+                        "EJECUTA AHORA la acción pendiente usando una herramienta. "
+                        f"Tarea: '{user_input[:200]}'. "
+                        "Responde ÚNICAMENTE con el JSON de la herramienta. Sin texto. Sin explicaciones."
+                    )})
+                    continue  # Forzar ejecución real
+
+                # No hay refusal ni promesa → es respuesta final legítima
                 _set_phase("responding", "Generando respuesta final...")
                 if progress_callback:
                     try: progress_callback("responding", "Generando respuesta final", progress=0.95)
@@ -1869,7 +1933,7 @@ class AutomyxAgent:
 
             for idx, tool_call in enumerate(tool_calls, 1):
                 if "action" not in tool_call:
-                    msg = f"[Tool {idx}] No se encontrÃ³ 'action' en tool_call. Ignorando."
+                    msg = f"[Tool {idx}] No se encontró 'action' en tool_call. Ignorando."
                     if TERMINAL_AVAILABLE and term:
                         term.warn(msg)
                     all_results_msg += msg + "\n"
@@ -1892,29 +1956,16 @@ class AutomyxAgent:
                 # 4.1: Validar el tool call
                 validation_error = self._validate_tool_call(action, args)
                 if validation_error:
-                    _set_phase("error", f"ValidaciÃ³n fallÃ³: {validation_error[:80]}", error_message=validation_error)
+                    _set_phase("error", f"Validación falló: {validation_error[:80]}", error_message=validation_error)
                     if TERMINAL_AVAILABLE and term:
-                        term.error(f"ValidaciÃ³n: {validation_error}")
+                        term.error(f"Validación: {validation_error}")
                     all_results_msg += f"[Tool {idx}] {validation_error}\n"
                     continue
 
-                # 4.2: DetecciÃ³n de loop (por acciÃ³n repetida o similar)
-                _same_action_count = sum(1 for ra in recent_actions if ra.get("action") == action)
-                if _same_action_count >= 3:
-                    loop_detected = True
-                    if TERMINAL_AVAILABLE and term:
-                        term.tool_loop_warning(action, _same_action_count)
-                    all_results_msg += (
-                        f"SISTEMA: Detecte que intentaste '{action}' "
-                        f"{_same_action_count} veces seguidas sin exito. "
-                        f"CAMBIA DE ESTRATEGIA. Prueba otra herramienta o enfoque.\n"
-                    )
-                    continue
-                recent_actions.append({"action": action, "args": args})
-                if len(recent_actions) > 15:
-                    recent_actions.pop(0)
-
-                # Detección de duplicado EXACTO (misma acción + mismos args = 100% atascado)
+                # 4.2: Detección de duplicado EXACTO (misma acción + mismos args = 100% atascado)
+                # NOTA: la detección por "mismo tool N veces" se eliminó porque bloqueaba
+                # tool calls legítimas (ej: 5 execute_cmd con comandos distintos).
+                # Solo bloqueamos cuando los args son EXACTAMENTE iguales.
                 try:
                     import json as _j_dedup
                     _exact_key = f"{action}|{_j_dedup.dumps(args, sort_keys=True, default=str)[:200]}"
@@ -1927,6 +1978,9 @@ class AutomyxAgent:
                     recent_exact.add(_exact_key)
                 except Exception:
                     pass
+                recent_actions.append({"action": action, "args": args})
+                if len(recent_actions) > 20:
+                    recent_actions.pop(0)
 
                 # Registrar tool para auto-skill-save al finalizar
                 tools_used_in_task.append({
@@ -1943,7 +1997,7 @@ class AutomyxAgent:
                     except Exception:
                         pass
 
-                # 4.3: Comunicar QUÃ‰ voy a hacer y por quÃ©
+                # 4.3: Comunicar QUÉ voy a hacer y por qué
                 args_summary = _truncate_args(args)
                 rationale = tool_call.get("rationale", "")
                 narrative = f"[{idx}/{len(tool_calls)}] "
@@ -2073,7 +2127,7 @@ class AutomyxAgent:
                     ok = False
                     summary = f"exception: {str(tool_exc)[:60]}"
                     # Claude Code style prints errors immediately via the callback, so we keep this set_phase
-                    _set_phase("error", f"{action} fallÃ³: {str(tool_exc)[:60]}",
+                    _set_phase("error", f"{action} falló: {str(tool_exc)[:60]}",
                               error_message=str(tool_exc), tool_result_summary=summary, tool_result_ok=False)
                     # Eliminamos la impresion doble de tool_result_error aqui
                     # if TERMINAL_AVAILABLE and term:
@@ -2108,6 +2162,20 @@ class AutomyxAgent:
                         if tool_result.get("error") and ErrorLearningSystem is not None:
                             try:
                                 ErrorLearningSystem.log_error(action, args, str(tool_result["error"]), context=user_input[:200])
+                            except Exception:
+                                pass
+                    elif isinstance(tool_result, str):
+                        # Convención usada por ~190 tools del repo: strings de resultado
+                        # empiezan con "❌"/"⚠️" en fallo y "✅" en éxito. Antes CUALQUIER
+                        # string se marcaba ok=True sin mirar su contenido, lo que dejaba
+                        # que el LLM narrara "éxito" sobre errores reales (ej. Blender con
+                        # output_path vacío devolviendo "❌ Error..." se mostraba con ✓ y el
+                        # modelo inventaba detalles de un video que nunca se creó).
+                        _stripped = tool_result.strip()
+                        ok = not (_stripped.startswith("❌") or _stripped.startswith("⚠️") or _stripped.lower().startswith("error"))
+                        if not ok and ErrorLearningSystem is not None:
+                            try:
+                                ErrorLearningSystem.log_error(action, args, _stripped[:300], context=user_input[:200])
                             except Exception:
                                 pass
                     else:
@@ -2160,7 +2228,11 @@ class AutomyxAgent:
                     "\n\n[INSTRUCCION CRITICA] Tu PROXIMA respuesta DEBE ser texto en espanol "
                     "explicando que hiciste y el resultado. "
                     "NO ejecutes mas herramientas si la tarea ya esta completa. "
-                    "Si falta algo, ejecuta UNA sola herramienta mas."
+                    "Si falta algo, ejecuta UNA sola herramienta mas. "
+                    "BASATE UNICAMENTE en el 'Resultado:' real de cada herramienta de arriba — "
+                    "NUNCA inventes detalles (nombres de escenas, personajes, archivos, rutas) que no "
+                    "esten literalmente en ese resultado. Si una herramienta devolvio '❌' o un error, "
+                    "DEBES decirle al usuario que fallo y por que, NO describas un exito que no ocurrio."
                 )
                 self.history.append({"role": "user", "content": all_results_msg})
             else:

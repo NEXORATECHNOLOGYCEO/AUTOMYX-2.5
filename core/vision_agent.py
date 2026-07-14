@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import base64
-import io
 import os
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
 try:
     from PIL import Image, ImageChops, ImageFilter, ImageGrab
@@ -27,60 +25,31 @@ except ImportError:
 _INSTANCE: Optional[VisionAgent] = None
 
 
-def _image_to_base64(image_path: str) -> str:
-    with open(image_path, "rb") as f:
-        return base64.b64encode(f.read()).decode("utf-8")
-
-
-def _pil_to_base64(img) -> str:
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
-
-
 class VisionAgent:
-    def __init__(self, llm_runner: Optional[Callable[[list], str]] = None):
-        self._llm = llm_runner
-
     def analyze_screenshot(self, image_path: str, question: Optional[str] = None) -> str:
         if not _HAS_PIL:
             return "PIL no instalado. Ejecuta: pip install Pillow"
 
         info = self.get_image_info(image_path)
-        b64 = _image_to_base64(image_path)
-        default_q = question or "Describe detalladamente lo que ves en esta imagen."
+        try:
+            from tools.vision_tools import VisionTools
+            result = VisionTools.see_image(image_path, question or "")
+        except Exception as e:
+            result = {"ok": False, "error": str(e)}
 
-        if self._llm:
-            try:
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": "image/png",
-                                    "data": b64,
-                                },
-                            },
-                            {"type": "text", "text": default_q},
-                        ],
-                    }
-                ]
-                return self._llm(messages)
-            except Exception:
-                return (
-                    f"Análisis técnico de imagen (sin visión LLM):\n"
-                    f"- Dimensiones: {info['width']}x{info['height']}\n"
-                    f"- Formato: {info['format']}\n"
-                    f"- Tamaño: {info['size_kb']} KB\n"
-                    f"- Modo de color: {info['mode']}"
-                )
-        return (
-            f"Imagen analizada: {image_path}\n"
-            f"Dimensiones: {info['width']}x{info['height']} | Formato: {info['format']} | Tamaño: {info['size_kb']} KB"
-        )
+        if not result.get("ok"):
+            return (
+                f"Análisis técnico de imagen (sin visión real: {result.get('error', 'error desconocido')}):\n"
+                f"- Dimensiones: {info['width']}x{info['height']}\n"
+                f"- Formato: {info['format']}\n"
+                f"- Tamaño: {info['size_kb']} KB\n"
+                f"- Modo de color: {info['mode']}"
+            )
+
+        out = result["description"]
+        if result.get("text_detected"):
+            out += f"\n\nTexto detectado en la imagen:\n{result['text_detected']}"
+        return out
 
     def detect_text_in_image(self, image_path: str) -> str:
         if not _HAS_PIL:
@@ -191,10 +160,8 @@ class VisionAgent:
         return self.analyze_screenshot(screenshot_path, question)
 
 
-def get_vision_agent(llm_runner: Optional[Callable[[list], str]] = None) -> VisionAgent:
+def get_vision_agent() -> VisionAgent:
     global _INSTANCE
     if _INSTANCE is None:
-        _INSTANCE = VisionAgent(llm_runner)
-    elif llm_runner and _INSTANCE._llm is None:
-        _INSTANCE._llm = llm_runner
+        _INSTANCE = VisionAgent()
     return _INSTANCE

@@ -645,22 +645,24 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     _w, _h = int(_parts[0]), int(_parts[1])
             except Exception:
                 pass
-            # Convertir a ruta absoluta para evitar problemas con CWD de ffmpeg.
-            # En Windows, las rutas con : (drive letter) DEBEN escaparse en el filtro
-            # de ffmpeg con comillas simples, sino el parser interpreta los ':' como
-            # separadores de opciones.
-            abs_ass_path = os.path.abspath(ass_path).replace('\\', '/')
-            safe_ass = "'" + abs_ass_path + "'"
+            # El filtro "subtitles" de ffmpeg rompe con CUALQUIER ruta absoluta de Windows
+            # (el ':' de la letra de unidad se interpreta como separador de opción, y ni
+            # las comillas simples ni el escape con '\' lo evitan de forma fiable en el
+            # parser de AVFilterGraph). Solución robusta: correr ffmpeg con cwd en la
+            # carpeta del .ass y referenciarlo solo por su nombre de archivo (sin ruta).
+            abs_ass_path = os.path.abspath(ass_path)
+            ass_dir = os.path.dirname(abs_ass_path)
+            ass_filename = os.path.basename(abs_ass_path)
             cmd = [
                 ffmpeg_bin, "-y", "-i", input_path,
-                "-vf", f"subtitles={safe_ass}:original_size={_w}x{_h}",
+                "-vf", f"subtitles={ass_filename}:original_size={_w}x{_h}",
                 "-c:a", "aac", "-b:a", "128k",
                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
                 "-movflags", "+faststart",
                 output_path,
             ]
             try:
-                sub_res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                sub_res = subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd=ass_dir)
             except subprocess.TimeoutExpired:
                 if os.path.exists(ass_path):
                     try: os.remove(ass_path)
@@ -1178,13 +1180,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     a_filters = [f for f in a_filters if not f.startswith("afade=out:st=9999")]
 
             # Añadir subtítulos ASS al final (después de scale para que se vean en 9:16)
+            # El filtro "subtitles" rompe con cualquier ruta absoluta de Windows (el ':'
+            # de la letra de unidad no sobrevive el parser de AVFilterGraph ni con comillas
+            # ni con escape). Se referencia por nombre de archivo y se corre ffmpeg con
+            # cwd en esa carpeta (ver ass_render_cwd más abajo).
+            ass_render_cwd = None
             if ass_subtitle_path and os.path.exists(ass_subtitle_path):
-                # Usar ruta absoluta y escapar con comillas simples (necesario en Windows
-                # para rutas con drive letter tipo C:\... donde : se interpreta como
-                # separador de opción en ffmpeg).
-                abs_ass_path = os.path.abspath(ass_subtitle_path).replace('\\', '/')
-                safe_ass = "'" + abs_ass_path + "'"
-                v_filters.append(f"subtitles={safe_ass}")
+                abs_ass_path = os.path.abspath(ass_subtitle_path)
+                ass_render_cwd = os.path.dirname(abs_ass_path)
+                v_filters.append(f"subtitles={os.path.basename(abs_ass_path)}")
                 log_lines.append(f"   💬 Subtítulos: {abs_ass_path}")
 
             # ---- 9. Truncar a max_duration_s si se especificó ----
@@ -1206,7 +1210,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 output_path,
             ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd=ass_render_cwd)
             if result.returncode != 0:
                 return f"❌ Error en render final: {result.stderr[-800:]}"
 

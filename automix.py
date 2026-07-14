@@ -147,8 +147,170 @@ def _kv_table(title: str, rows: list) -> None:
 # Comandos
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _start_telegram_direct(model: str = "") -> None:
+    """Bot de Telegram directo (sin Gateway). Corre en su propio thread."""
+    try:
+        from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+        from telegram.ext import (
+            Application, CommandHandler, MessageHandler,
+            CallbackQueryHandler, filters, ContextTypes,
+        )
+    except ImportError:
+        print("[Telegram] ⚠  python-telegram-bot no instalado: pip install python-telegram-bot")
+        return
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return
+
+    import threading
+    import asyncio
+
+    _agents: dict = {}
+    _agents_lock  = threading.Lock()
+    _user_models: dict = {}
+
+    def _get_agent(chat_id: str, model_name: str = ""):
+        with _agents_lock:
+            if chat_id not in _agents:
+                from core.agent import AutomyxAgent
+                a = AutomyxAgent(model_name=model_name or model or "")
+                try:
+                    from core.tool_registry import register_all_tools
+                    register_all_tools(a)
+                except Exception:
+                    pass
+                _agents[chat_id] = a
+            return _agents[chat_id]
+
+    async def _cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text(
+            "🤖 *¡Hola! Soy Automyx.*\n\n"
+            "Puedo ejecutar tareas en tu PC: abrir programas, buscar en internet, "
+            "crear archivos, desplegar proyectos, correr código y mucho más.\n\n"
+            "Solo escríbeme lo que necesitas. ¿En qué te ayudo?",
+            parse_mode="Markdown",
+        )
+
+    async def _cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        kb = [
+            [InlineKeyboardButton("⚡ GPT-OSS-120b (NVIDIA)",  callback_data="m:openai/gpt-oss-120b")],
+            [InlineKeyboardButton("🌐 GLM-5.1 (NVIDIA)",       callback_data="m:z-ai/glm-5.1")],
+            [InlineKeyboardButton("🔮 Kimi K2.6 (NVIDIA)",     callback_data="m:moonshotai/kimi-k2.6")],
+            [InlineKeyboardButton("🧠 Claude Sonnet 4.5",      callback_data="m:claude-sonnet-4-5")],
+            [InlineKeyboardButton("🤖 GPT-4o",                 callback_data="m:gpt-4o")],
+        ]
+        await update.message.reply_text(
+            "Elige el modelo para esta sesión:",
+            reply_markup=InlineKeyboardMarkup(kb),
+        )
+
+    async def _btn_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        q = update.callback_query
+        await q.answer()
+        if q.data.startswith("m:"):
+            m = q.data[2:]
+            uid = str(q.from_user.id)
+            _user_models[uid] = m
+            chat_id = str(q.message.chat_id)
+            with _agents_lock:
+                _agents.pop(chat_id, None)  # reinicia agente con el nuevo modelo
+            await q.edit_message_text(f"✅ Modelo cambiado a `{m}`", parse_mode="Markdown")
+
+    async def _handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        msg = (update.message.text or "").strip()
+        if not msg:
+            return
+        chat_id   = str(update.message.chat_id)
+        user_name = update.effective_user.first_name or "?"
+        uid       = str(update.effective_user.id)
+        sel_model = _user_models.get(uid, model or "")
+
+        print(f"[Telegram] {user_name}: {msg[:100]}")
+
+        try:
+            await context.bot.send_chat_action(
+                chat_id=update.effective_chat.id, action="typing"
+            )
+        except Exception:
+            pass
+
+        agent = _get_agent(chat_id, sel_model)
+        loop  = asyncio.get_event_loop()
+
+        # Mantener "typing" mientras el agente trabaja
+        _done = asyncio.Event()
+
+        async def _keep_typing():
+            while not _done.is_set():
+                try:
+                    await context.bot.send_chat_action(
+                        chat_id=update.effective_chat.id, action="typing"
+                    )
+                except Exception:
+                    pass
+                try:
+                    await asyncio.wait_for(_done.wait(), timeout=4.5)
+                except asyncio.TimeoutError:
+                    pass
+
+        typing_task = asyncio.ensure_future(_keep_typing())
+        try:
+            reply = await loop.run_in_executor(None, lambda: agent.run(msg))
+        except Exception as e:
+            reply = f"❌ Error: {e}"
+        finally:
+            _done.set()
+            try:
+                typing_task.cancel()
+            except Exception:
+                pass
+
+        reply = (reply or "").strip() or "✅ Tarea completada."
+
+        # Telegram limita a 4096 chars por mensaje
+        for i in range(0, len(reply), 4000):
+            await update.message.reply_text(reply[i:i+4000])
+
+        print(f"[Telegram] ✓ Respondido a {user_name} ({len(reply)} chars)")
+
+    async def _handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not update.message.caption:
+            update.message.text = "Describe esta imagen"
+        else:
+            update.message.text = update.message.caption
+        await _handle_msg(update, context)
+
+    app = Application.builder().token(token).build()
+    app.add_handler(CommandHandler("start",  _cmd_start))
+    app.add_handler(CommandHandler("model",  _cmd_model))
+    app.add_handler(CallbackQueryHandler(_btn_callback))
+    app.add_handler(MessageHandler(filters.PHOTO, _handle_photo))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_msg))
+
+    print(f"[Telegram] ✅ Bot iniciado (modo directo)")
+    try:
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
+    except Exception as e:
+        print(f"[Telegram] Error: {e}")
+
+
 def cmd_default(args):
-    """Sin subcomando → arranca el CLI hacker completo."""
+    """Sin subcomando → arranca el CLI hacker completo + Telegram si hay token."""
+    # ── Telegram en background si TELEGRAM_BOT_TOKEN está en .env ──────────
+    _tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if _tg_token:
+        import threading
+        _tg_thread = threading.Thread(
+            target=_start_telegram_direct,
+            args=(getattr(args, "model", "") or "",),
+            daemon=True,
+            name="automyx-telegram",
+        )
+        _tg_thread.start()
+        if console:
+            console.print(f"  [{G}]✓[/{G}]  [{DM}]Telegram bot iniciado en segundo plano[/{DM}]")
+
     try:
         from core.automyx_cli_v5 import AutomyxCLI
         AutomyxCLI(

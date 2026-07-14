@@ -97,16 +97,39 @@ class ThreeDTools:
             return f"❌ Error ejecutando código: {str(e)}"
 
     @staticmethod
+    def _render_and_verify(script_content: str, output_path: str) -> str:
+        """
+        Ejecuta un script de Blender que renderiza a `output_path` y verifica que el
+        archivo REALMENTE se haya creado antes de reportar éxito. Blender puede salir
+        con código 0 aunque el script interno haya lanzado una excepción a mitad de
+        camino (ej. un enum de la API que cambió entre versiones) -- sin esta
+        verificación, execute_blender_python_code reportaba "✅ éxito" con el traceback
+        real escondido en el string, y el video nunca se creaba.
+        """
+        result = ThreeDTools.execute_blender_python_code(python_code=script_content)
+        if not os.path.exists(output_path) or os.path.getsize(output_path) < 1000:
+            return (
+                f"❌ Blender NO generó el archivo de salida ({output_path}). "
+                f"El proceso de Blender terminó pero el render falló o no llegó a "
+                f"ejecutarse.\nDetalle de Blender:\n{result}"
+            )
+        return result
+
+    @staticmethod
     def generate_professional_3d_video(**kwargs) -> str:
         """
         Genera un script de Blender para crear una escena 3D profesional (luces, cámara, materiales, animación)
         y renderizarla a un archivo de video MP4, usando la descripción proporcionada.
         """
         scene_description = kwargs.get('scene_description') or kwargs.get('description') or kwargs.get('prompt') or ""
-        output_path = kwargs.get('output_path') or kwargs.get('filepath') or kwargs.get('file_path') or kwargs.get('output')
 
+        if not scene_description:
+            return "❌ Error: scene_description es obligatorio. Describe la escena que quieres renderizar."
+
+        output_path = kwargs.get('output_path') or kwargs.get('filepath') or kwargs.get('file_path') or kwargs.get('output')
         if not output_path:
-            return "❌ Error: output_path es obligatorio. Por favor proporciona una ruta de destino (ej. C:\\Users\\...\\video.mp4)"
+            import time as _time
+            output_path = f"Descargas/automyx_3d_{int(_time.time())}.mp4"
 
         # Asegurarse de que las rutas se resuelvan correctamente
         from tools.pc_tools import PCTools
@@ -125,7 +148,25 @@ bpy.ops.object.delete(use_global=False)
 # === 2. CONFIGURAR RENDERIZADO ULTRA ===
 scene = bpy.context.scene
 scene.render.engine = 'CYCLES'
-scene.cycles.device = 'GPU'
+
+# Detectar si hay un dispositivo GPU real disponible para Cycles (CUDA/OPTIX/HIP/ONEAPI/METAL).
+# En máquinas sin GPU compatible (ej. Intel integrada sin oneAPI), forzar 'GPU' deja el render
+# a medias sin avisar; con CPU siempre completa el render aunque sea más lento.
+scene.cycles.device = 'CPU'
+try:
+    _cprefs = bpy.context.preferences.addons['cycles'].preferences
+    _cprefs.get_devices()
+    _gpu_types = {'CUDA', 'OPTIX', 'HIP', 'ONEAPI', 'METAL'}
+    _available = {d.type for d in _cprefs.devices if getattr(d, 'type', None) in _gpu_types}
+    if _available:
+        _best = next(t for t in ('OPTIX', 'CUDA', 'HIP', 'ONEAPI', 'METAL') if t in _available)
+        _cprefs.compute_device_type = _best
+        for d in _cprefs.devices:
+            d.use = (d.type == _best or d.type == 'CPU')
+        scene.cycles.device = 'GPU'
+except Exception:
+    pass
+
 scene.cycles.samples = 256
 scene.cycles.use_denoising = True
 scene.cycles.denoiser = 'OPENIMAGEDENOISE'
@@ -135,7 +176,9 @@ scene.render.fps = 30
 scene.frame_start = 1
 scene.frame_end = 180
 
-# Renderizado a video MP4 H264
+# Renderizado a video MP4 H264 (Blender 4.x+/5.x: primero media_type='VIDEO', luego
+# file_format='FFMPEG' -- si no, 'FFMPEG' ni siquiera aparece como opción válida)
+scene.render.image_settings.media_type = 'VIDEO'
 scene.render.image_settings.file_format = 'FFMPEG'
 scene.render.ffmpeg.format = 'MPEG4'
 scene.render.ffmpeg.codec = 'H264'
@@ -143,14 +186,25 @@ scene.render.ffmpeg.constant_rate_factor = 'HIGH'
 scene.render.ffmpeg.ffmpeg_preset = 'GOOD'
 scene.render.filepath = r"%s"
 
-# === 3. AGREGAR HDRI (ILUMINACIÓN REALISTA) ===
+# === 3. ILUMINACIÓN (cielo procedural + sol real) ===
+# OJO: la versión anterior conectaba un bpy.data.images.new() vacío (negro, sin
+# píxeles) como "HDRI" -- eso dejaba TODA la escena a oscuras sin luz alguna.
+# Se reemplaza por un Sky Texture procedural (nativo de Blender, sin archivos
+# externos) + un Sun lamp real, así la escena queda iluminada de verdad.
 world = bpy.context.scene.world
 world.use_nodes = True
 bg_node = world.node_tree.nodes["Background"]
-env_tex_node = world.node_tree.nodes.new(type="ShaderNodeTexEnvironment")
-# Puedes reemplazar con una ruta a tu HDRI local, aquí usamos una textura procedural de prueba
-env_tex_node.image = bpy.data.images.new(name="HDRI_Preview", width=2048, height=1024)
-world.node_tree.links.new(env_tex_node.outputs['Color'], bg_node.inputs['Color'])
+sky_tex_node = world.node_tree.nodes.new(type="ShaderNodeTexSky")
+sky_tex_node.sky_type = 'MULTIPLE_SCATTERING'
+sky_tex_node.sun_elevation = math.radians(35)
+sky_tex_node.sun_rotation = math.radians(60)
+world.node_tree.links.new(sky_tex_node.outputs['Color'], bg_node.inputs['Color'])
+bg_node.inputs['Strength'].default_value = 0.12
+
+bpy.ops.object.light_add(type='SUN', location=(0, 0, 30), rotation=(math.radians(35), 0, math.radians(60)))
+sun_light = bpy.context.active_object
+sun_light.data.energy = 0.5
+sun_light.data.angle = math.radians(2.0)
 
 # === 4. TERRENO O ISLA ===
 bpy.ops.mesh.primitive_plane_add(size=100, location=(0,0,0))
@@ -177,7 +231,8 @@ bsdf_terreno = nodes.get("Principled BSDF")
 if bsdf_terreno:
     bsdf_terreno.inputs['Base Color'].default_value = (0.25, 0.18, 0.10, 1)  # Marrón tierra
     bsdf_terreno.inputs['Roughness'].default_value = 0.8
-    bsdf_terreno.inputs['Subsurface'].default_value = 0.1
+    if 'Subsurface Weight' in bsdf_terreno.inputs:
+        bsdf_terreno.inputs['Subsurface Weight'].default_value = 0.1
 if terreno.data.materials:
     terreno.data.materials[0] = mat_terreno
 else:
@@ -203,7 +258,7 @@ anim_agua = agua.modifiers["Displace"]
 anim_agua.texture.noise_scale = 1.5
 for frame in range(1, 181, 5):
     bpy.context.scene.frame_set(frame)
-    tex_agua.nabla = (frame * 0.01, frame * 0.01, 0)
+    tex_agua.nabla = 0.025 + (frame * 0.0002)
     tex_agua.keyframe_insert(data_path="nabla", frame=frame)
 
 # Material de agua realista
@@ -215,8 +270,8 @@ bsdf_agua = nodes_agua.get("Principled BSDF")
 if bsdf_agua:
     bsdf_agua.inputs['Base Color'].default_value = (0.01, 0.1, 0.2, 1)  # Azul oscuro mar
     bsdf_agua.inputs['Roughness'].default_value = 0.05
-    bsdf_agua.inputs['Transmission'].default_value = 0.95
-    bsdf_agua.inputs['Transmission Roughness'].default_value = 0.02
+    if 'Transmission Weight' in bsdf_agua.inputs:
+        bsdf_agua.inputs['Transmission Weight'].default_value = 0.95
     bsdf_agua.inputs['IOR'].default_value = 1.33
 if agua.data.materials:
     agua.data.materials[0] = mat_agua
@@ -250,17 +305,17 @@ for frame in range(1, 121, 10):
 
 # === 7. LOBOS (dos conos con orejas - representación simple pero profesional) ===
 def crear_lobo(nombre, loc):
-    bpy.ops.mesh.primitive_cone_add(radius=1, depth=4, location=loc, rotation=(math.radians(90), 0, 0))
+    bpy.ops.mesh.primitive_cone_add(radius1=1, radius2=0, depth=4, location=loc, rotation=(math.radians(90), 0, 0))
     lobo = bpy.context.active_object
     lobo.name = nombre
     mat_lobo = bpy.data.materials.new(name=f"Material_{nombre}")
     mat_lobo.use_nodes = True
     mat_lobo.node_tree.nodes["Principled BSDF"].inputs['Base Color'].default_value = (0.2, 0.2, 0.2, 1)  # Gris lobo
     lobo.data.materials.append(mat_lobo)
-    
+
     # Orejas
-    bpy.ops.mesh.primitive_cone_add(radius=0.3, depth=1, location=(loc[0]+0.5, loc[1], loc[2]+2.5), rotation=(0,0,0.3))
-    bpy.ops.mesh.primitive_cone_add(radius=0.3, depth=1, location=(loc[0]-0.5, loc[1], loc[2]+2.5), rotation=(0,0,-0.3))
+    bpy.ops.mesh.primitive_cone_add(radius1=0.3, radius2=0, depth=1, location=(loc[0]+0.5, loc[1], loc[2]+2.5), rotation=(0,0,0.3))
+    bpy.ops.mesh.primitive_cone_add(radius1=0.3, radius2=0, depth=1, location=(loc[0]-0.5, loc[1], loc[2]+2.5), rotation=(0,0,-0.3))
     return lobo
 
 lobo1 = crear_lobo("Lobo_1", (5, 10, 2))
@@ -296,29 +351,45 @@ cam.location = (0, 15, 5)
 cam.keyframe_insert(data_path="location", frame=180)
 
 # === 9. COMPOSICIÓN (MEJORAR LA IMAGEN FINAL) ===
-scene.use_nodes = True
-tree = scene.node_tree
-tree.nodes.clear()
+# La API del compositor cambió entre versiones de Blender (node_tree/CompositorNodeComposite
+# en 3.x/4.x vs compositing_node_group/NodeGroupOutput en 5.x). Es puramente cosmético
+# (glow + distorsión de lente), así que si algo no cuadra con la versión instalada, se
+# omite en vez de tirar todo el render.
+try:
+    scene.use_nodes = True
+    tree = getattr(scene, "compositing_node_group", None) or scene.node_tree
+    tree.nodes.clear()
 
-rl = tree.nodes.new('CompositorNodeRLayers')
-glare = tree.nodes.new('CompositorNodeGlare')
-glare.glare_type = 'FOG_GLOW'
-glare.quality = 'HIGH'
-glare.threshold = 0.8
-lens = tree.nodes.new('CompositorNodeLensdist')
-lens.inputs['Distort'].default_value = 0.015
-lens.inputs['Dispersion'].default_value = 0.01
-comp = tree.nodes.new('CompositorNodeComposite')
+    rl = tree.nodes.new('CompositorNodeRLayers')
+    glare = tree.nodes.new('CompositorNodeGlare')
+    glare.glare_type = 'FOG_GLOW'
+    glare.quality = 'HIGH'
+    glare.threshold = 0.8
+    lens = tree.nodes.new('CompositorNodeLensdist')
+    lens.inputs['Distort'].default_value = 0.015
+    lens.inputs['Dispersion'].default_value = 0.01
 
-tree.links.new(rl.outputs['Image'], glare.inputs['Image'])
-tree.links.new(glare.outputs['Image'], lens.inputs['Image'])
-tree.links.new(lens.outputs['Image'], comp.inputs['Image'])
+    if 'CompositorNodeComposite' in dir(bpy.types):
+        comp = tree.nodes.new('CompositorNodeComposite')
+        comp_input = comp.inputs['Image']
+    else:
+        comp = tree.nodes.new('NodeGroupOutput')
+        if 'Image' not in [s.name for s in tree.interface.items_tree]:
+            tree.interface.new_socket(name='Image', in_out='OUTPUT', socket_type='NodeSocketColor')
+        comp_input = comp.inputs['Image']
+
+    tree.links.new(rl.outputs['Image'], glare.inputs['Image'])
+    tree.links.new(glare.outputs['Image'], lens.inputs['Image'])
+    tree.links.new(lens.outputs['Image'], comp_input)
+except Exception as _e:
+    print(f"AVISO: compositor omitido ({_e})")
+    scene.use_nodes = False
 
 print("✅ Renderizado iniciado...")
 bpy.ops.render.render(animation=True)
 print("✅ Renderizado finalizado!")
 ''' % output_path
-        return ThreeDTools.execute_blender_python_code(python_code=script_content)
+        return ThreeDTools._render_and_verify(script_content, output_path)
 
     @staticmethod
     def generate_cinematic_environment(**kwargs) -> str:
@@ -348,7 +419,20 @@ bpy.ops.object.delete(use_global=False)
 
 scene = bpy.context.scene
 scene.render.engine = 'CYCLES'
-scene.cycles.device = 'GPU'
+scene.cycles.device = 'CPU'
+try:
+    _cprefs = bpy.context.preferences.addons['cycles'].preferences
+    _cprefs.get_devices()
+    _gpu_types = {{'CUDA', 'OPTIX', 'HIP', 'ONEAPI', 'METAL'}}
+    _available = {{d.type for d in _cprefs.devices if getattr(d, 'type', None) in _gpu_types}}
+    if _available:
+        _best = next(t for t in ('OPTIX', 'CUDA', 'HIP', 'ONEAPI', 'METAL') if t in _available)
+        _cprefs.compute_device_type = _best
+        for d in _cprefs.devices:
+            d.use = (d.type == _best or d.type == 'CPU')
+        scene.cycles.device = 'GPU'
+except Exception:
+    pass
 scene.cycles.samples = 128
 scene.cycles.use_denoising = True
 scene.render.resolution_x = 1920
@@ -357,6 +441,7 @@ scene.render.fps = 24
 scene.frame_start = 1
 scene.frame_end = 120
 
+scene.render.image_settings.media_type = 'VIDEO'
 scene.render.image_settings.file_format = 'FFMPEG'
 scene.render.ffmpeg.format = 'MPEG4'
 scene.render.ffmpeg.codec = 'H264'
@@ -393,6 +478,26 @@ else:
     bsdf.inputs['Emission Strength'].default_value = 1.0
 terreno.data.materials.append(mat)
 
+# Iluminación (cielo procedural + sol/luna real, según time_of_day) -- sin esto la
+# escena queda a oscuras: select_all+delete borra hasta el Sun por defecto de Blender.
+_tod = "{time_of_day}"
+_sun_elev = {{"sunrise": 8, "noon": 75, "sunset": 8, "night": 5}}.get(_tod, 35)
+_sun_energy = {{"sunrise": 0.3, "noon": 0.6, "sunset": 0.25, "night": 0.01}}.get(_tod, 0.4)
+world = scene.world
+world.use_nodes = True
+bg_node = world.node_tree.nodes["Background"]
+sky_tex_node = world.node_tree.nodes.new(type="ShaderNodeTexSky")
+sky_tex_node.sky_type = 'MULTIPLE_SCATTERING'
+sky_tex_node.sun_elevation = math.radians(_sun_elev)
+sky_tex_node.sun_rotation = math.radians(60)
+world.node_tree.links.new(sky_tex_node.outputs['Color'], bg_node.inputs['Color'])
+bg_node.inputs['Strength'].default_value = 0.12 if _tod != "night" else 0.025
+
+bpy.ops.object.light_add(type='SUN', location=(0, 0, 30), rotation=(math.radians(_sun_elev), 0, math.radians(60)))
+sun_light = bpy.context.active_object
+sun_light.data.energy = _sun_energy
+sun_light.data.angle = math.radians(2.0)
+
 # Cámara
 bpy.ops.object.camera_add(location=(0, -40, 20), rotation=(math.radians(70), 0, 0))
 cam = bpy.context.active_object
@@ -414,31 +519,59 @@ else:
     cam.keyframe_insert(data_path="rotation_euler", frame=120)
 
 cam.keyframe_insert(data_path="location", frame=120)
-for fcurve in cam.animation_data.action.fcurves:
+
+# Blender 4.4+ reestructuró Action en layers/strips/channelbags (Action.fcurves ya no
+# existe si la acción no es "legacy"); soporta ambos esquemas.
+_cam_action = cam.animation_data.action
+if hasattr(_cam_action, "fcurves"):
+    _cam_fcurves = list(_cam_action.fcurves)
+else:
+    _cam_fcurves = []
+    for _layer in _cam_action.layers:
+        for _strip in _layer.strips:
+            for _slot in _cam_action.slots:
+                try:
+                    _cam_fcurves.extend(_strip.channelbag(_slot).fcurves)
+                except Exception:
+                    pass
+for fcurve in _cam_fcurves:
     for kf in fcurve.keyframe_points:
         kf.interpolation = 'LINEAR'
 
-# Composición
-scene.use_nodes = True
-tree = scene.node_tree
-tree.nodes.clear()
-rl = tree.nodes.new('CompositorNodeRLayers')
-glare = tree.nodes.new('CompositorNodeGlare')
-glare.glare_type = 'FOG_GLOW'
-glare.mix = -0.8
-glare.threshold = 1.0
-lens = tree.nodes.new('CompositorNodeLensdist')
-lens.inputs["Dispersion"].default_value = 0.02
-comp = tree.nodes.new('CompositorNodeComposite')
+# Composición (cosmética -- si la API del compositor no cuadra con esta versión de
+# Blender, se omite en vez de tirar todo el render)
+try:
+    scene.use_nodes = True
+    tree = getattr(scene, "compositing_node_group", None) or scene.node_tree
+    tree.nodes.clear()
+    rl = tree.nodes.new('CompositorNodeRLayers')
+    glare = tree.nodes.new('CompositorNodeGlare')
+    glare.glare_type = 'FOG_GLOW'
+    glare.mix = -0.8
+    glare.threshold = 1.0
+    lens = tree.nodes.new('CompositorNodeLensdist')
+    lens.inputs["Dispersion"].default_value = 0.02
 
-tree.links.new(rl.outputs["Image"], glare.inputs["Image"])
-tree.links.new(glare.outputs["Image"], lens.inputs["Image"])
-tree.links.new(lens.outputs["Image"], comp.inputs["Image"])
+    if 'CompositorNodeComposite' in dir(bpy.types):
+        comp = tree.nodes.new('CompositorNodeComposite')
+        comp_input = comp.inputs['Image']
+    else:
+        comp = tree.nodes.new('NodeGroupOutput')
+        if 'Image' not in [s.name for s in tree.interface.items_tree]:
+            tree.interface.new_socket(name='Image', in_out='OUTPUT', socket_type='NodeSocketColor')
+        comp_input = comp.inputs['Image']
+
+    tree.links.new(rl.outputs["Image"], glare.inputs["Image"])
+    tree.links.new(glare.outputs["Image"], lens.inputs["Image"])
+    tree.links.new(lens.outputs["Image"], comp_input)
+except Exception as _e:
+    print(f"AVISO: compositor omitido ({{_e}})")
+    scene.use_nodes = False
 
 print("✅ Renderizando entorno cinematográfico...")
 bpy.ops.render.render(animation=True)
 '''
-        return ThreeDTools.execute_blender_python_code(python_code=script_content)
+        return ThreeDTools._render_and_verify(script_content, output_path)
 
     @staticmethod
     def simulate_advanced_physics(**kwargs) -> str:
@@ -464,12 +597,26 @@ bpy.ops.object.delete(use_global=False)
 
 scene = bpy.context.scene
 scene.render.engine = 'CYCLES'
-scene.cycles.device = 'GPU'
+scene.cycles.device = 'CPU'
+try:
+    _cprefs = bpy.context.preferences.addons['cycles'].preferences
+    _cprefs.get_devices()
+    _gpu_types = {{'CUDA', 'OPTIX', 'HIP', 'ONEAPI', 'METAL'}}
+    _available = {{d.type for d in _cprefs.devices if getattr(d, 'type', None) in _gpu_types}}
+    if _available:
+        _best = next(t for t in ('OPTIX', 'CUDA', 'HIP', 'ONEAPI', 'METAL') if t in _available)
+        _cprefs.compute_device_type = _best
+        for d in _cprefs.devices:
+            d.use = (d.type == _best or d.type == 'CPU')
+        scene.cycles.device = 'GPU'
+except Exception:
+    pass
 scene.cycles.samples = 64
 scene.render.resolution_x = 1920
 scene.render.resolution_y = 1080
 scene.render.fps = 30
 scene.frame_end = 100
+scene.render.image_settings.media_type = 'VIDEO'
 scene.render.image_settings.file_format = 'FFMPEG'
 scene.render.ffmpeg.format = 'MPEG4'
 scene.render.ffmpeg.codec = 'H264'
@@ -518,9 +665,10 @@ elif sim_type == "cloth":
 
     bpy.ops.object.effector_add(type='WIND', location=(-4, 0, 5), rotation=(0, math.radians(90), 0))
     viento = bpy.context.active_object
-    viento.modifiers[0].strength = 2000
+    viento.field.strength = 2000
 
-bpy.ops.object.light_add(type='SUN', energy=5, rotation=(1, 0.5, 0))
+bpy.ops.object.light_add(type='SUN', rotation=(1, 0.5, 0))
+bpy.context.active_object.data.energy = 5
 bpy.ops.object.camera_add(location=(8, -12, 6), rotation=(math.radians(70), 0, math.radians(35)))
 scene.camera = bpy.context.active_object
 
@@ -528,7 +676,7 @@ print("✅ Bakeando físicas y renderizando...")
 bpy.ops.ptcache.bake_all(bake=True)
 bpy.ops.render.render(animation=True)
 '''
-        return ThreeDTools.execute_blender_python_code(python_code=script_content)
+        return ThreeDTools._render_and_verify(script_content, output_path)
 
     @staticmethod
     def composite_movie_sequence(**kwargs) -> str:
@@ -556,6 +704,7 @@ import bpy
 import os
 
 scene = bpy.context.scene
+scene.render.image_settings.media_type = 'VIDEO'
 scene.render.image_settings.file_format = 'FFMPEG'
 scene.render.ffmpeg.format = 'MPEG4'
 scene.render.ffmpeg.codec = 'H264'
@@ -578,13 +727,12 @@ for i, filepath in enumerate(videos):
         continue
     
     # Añadir el clip de video
-    clip = seq.sequences.new_movie(name=f"Clip_{{i}}", filepath=filepath, channel=channel, frame_start=current_frame)
-    clip.use_translation = True
+    clip = seq.strips.new_movie(name=f"Clip_{{i}}", filepath=filepath, channel=channel, frame_start=current_frame)
     secuencias.append(clip)
-    
+
     # Añadir audio si es que hay
     try:
-        audio_clip = seq.sequences.new_sound(name=f"Audio_{{i}}", filepath=filepath, channel=channel+1, frame_start=current_frame)
+        audio_clip = seq.strips.new_sound(name=f"Audio_{{i}}", filepath=filepath, channel=channel+1, frame_start=current_frame)
     except Exception:
         pass
     
@@ -599,14 +747,16 @@ for i, filepath in enumerate(videos):
 # Añadir transiciones de crossfade
 for i in range(len(secuencias) - 1):
     try:
-        seq.sequences.new_effect(
-            name=f"Fade_{{i}}", 
-            type='CROSS', 
-            channel=5, 
-            frame_start=secuencias[i+1].frame_start, 
-            frame_end=secuencias[i].frame_final_end, 
-            seq1=secuencias[i], 
-            seq2=secuencias[i+1]
+        _fade_start = secuencias[i+1].frame_start
+        _fade_len = max(1, secuencias[i].frame_final_end - _fade_start)
+        seq.strips.new_effect(
+            name=f"Fade_{{i}}",
+            type='CROSS',
+            channel=5,
+            frame_start=_fade_start,
+            length=_fade_len,
+            input1=secuencias[i],
+            input2=secuencias[i+1]
         )
     except Exception:
         pass  # Si falla, seguir sin transición
@@ -619,7 +769,7 @@ if secuencias:
 print("✅ Renderizando película final ensamblada...")
 bpy.ops.render.render(animation=True)
 '''
-        return ThreeDTools.execute_blender_python_code(python_code=script_content)
+        return ThreeDTools._render_and_verify(script_content, output_path)
 
     @staticmethod
     def generate_3d_model(model_type: str = "monkey", output_path: str = "") -> str:
@@ -681,12 +831,17 @@ else:
                 f.write(script_content)
                 
             result = ThreeDTools.run_blender_script(temp_script_path)
-            
+
             try:
                 os.remove(temp_script_path)
             except Exception:
                 pass
-            
+
+            if not os.path.exists(output_path) or os.path.getsize(output_path) < 100:
+                return (
+                    f"❌ Blender NO generó el archivo de salida ({output_path}).\n"
+                    f"Detalle de Blender:\n{result}"
+                )
             return f"✅ Proceso 3D completado para {model_type}. Resultado: {result}"
         except Exception as e:
             return f"❌ Error generando modelo 3D: {str(e)}"

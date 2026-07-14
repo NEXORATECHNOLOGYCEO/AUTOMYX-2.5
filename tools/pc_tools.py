@@ -61,13 +61,24 @@ class PCTools:
             return f"❌ Error leyendo directorio '{path}': {str(e)}"
 
     @staticmethod
-    def read_file(file_path: str) -> str:
-        """Lee el contenido de un archivo de texto/código. Útil para que la IA entienda el código actual."""
+    def read_file(**kwargs) -> str:
+        """Lee el contenido de un archivo de texto/código. Acepta file_path, path, file o filename."""
+        file_path = (
+            kwargs.get('file_path')
+            or kwargs.get('path')
+            or kwargs.get('file')
+            or kwargs.get('filename')
+            or kwargs.get('name')
+        )
+        if not file_path:
+            return (
+                '❌ Error en read_file: falta el argumento "file_path". '
+                'Usa {"action": "read_file", "args": {"file_path": "C:\\\\ruta\\\\archivo.txt"}}'
+            )
         try:
-            file_path = PCTools._resolve_path(file_path)
-            with open(file_path, 'r', encoding='utf-8') as f:
+            file_path = PCTools._resolve_path(str(file_path))
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                 content = f.read()
-            # Limitar la salida para no saturar el contexto si el archivo es gigante
             if len(content) > 15000:
                 content = content[:15000] + "\n\n...[Contenido truncado por longitud]..."
             return f"Contenido de '{file_path}':\n```\n{content}\n```"
@@ -365,7 +376,8 @@ class PCTools:
                 try:
                     _install_to = 180
                     pre_result = subprocess.run(
-                        pre_cmd, shell=True, capture_output=True, text=True, timeout=_install_to
+                        pre_cmd, shell=True, capture_output=True, text=True,
+                        encoding='utf-8', errors='replace', timeout=_install_to
                     )
                     pre_out = (pre_result.stdout or pre_result.stderr or "").strip()[-500:]
                 except subprocess.TimeoutExpired:
@@ -410,7 +422,8 @@ class PCTools:
 
         try:
             result = subprocess.run(
-                command, shell=True, capture_output=True, text=True, timeout=timeout
+                command, shell=True, capture_output=True, text=True,
+                encoding='utf-8', errors='replace', timeout=timeout
             )
             out = result.stdout or ""
             err = result.stderr or ""
@@ -434,7 +447,8 @@ class PCTools:
             port = int(port)
             result = subprocess.run(
                 f"netstat -ano | findstr :{port}",
-                shell=True, capture_output=True, text=True, timeout=10
+                shell=True, capture_output=True, text=True,
+                encoding='utf-8', errors='replace', timeout=10
             )
             lines = [l for l in result.stdout.splitlines() if f":{port}" in l]
             if not lines:
@@ -459,7 +473,8 @@ class PCTools:
             port = int(port)
             result = subprocess.run(
                 f"for /f \"tokens=5\" %a in ('netstat -ano ^| findstr :{port}') do taskkill /F /PID %a",
-                shell=True, capture_output=True, text=True, timeout=15
+                shell=True, capture_output=True, text=True,
+                encoding='utf-8', errors='replace', timeout=15
             )
             if result.returncode == 0:
                 return f"✅ Proceso en puerto {port} terminado."
@@ -503,7 +518,8 @@ class PCTools:
                 return f"✅ npm {script} iniciado en background en '{cwd}'"
             result = subprocess.run(
                 full_cmd, shell=True, cwd=cwd,
-                capture_output=True, text=True, timeout=timeout
+                capture_output=True, text=True,
+                encoding='utf-8', errors='replace', timeout=timeout
             )
             out = (result.stdout or result.stderr or "").strip()
             return out[-1500:] or f"✅ npm {script} completado (sin output). Exit: {result.returncode}"
@@ -528,7 +544,10 @@ class PCTools:
             if bg:
                 subprocess.Popen(cmd, shell=True, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return f"✅ {cmd} iniciado en background en '{cwd}'"
-            result = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+            result = subprocess.run(
+                cmd, shell=True, cwd=cwd, capture_output=True, text=True,
+                encoding='utf-8', errors='replace', timeout=timeout
+            )
             out = (result.stdout or result.stderr or "").strip()
             return out[-1500:] or f"✅ {cmd} completado. Exit: {result.returncode}"
         except subprocess.TimeoutExpired:
@@ -562,7 +581,8 @@ class PCTools:
         results = []
         for cmd, label in tools_check:
             try:
-                r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
+                r = subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                                   encoding='utf-8', errors='replace', timeout=5)
                 ver = (r.stdout or r.stderr or "").strip().split("\n")[0]
                 results.append(f"  ✓ {label}: {ver}" if ver else f"  · {label}: no encontrado")
             except Exception:
@@ -629,12 +649,14 @@ class PCTools:
             if name:
                 result = subprocess.run(
                     f"tasklist /fi \"IMAGENAME eq {name}*\"",
-                    shell=True, capture_output=True, text=True, timeout=10
+                    shell=True, capture_output=True, text=True,
+                    encoding='utf-8', errors='replace', timeout=10
                 )
             else:
                 result = subprocess.run(
                     "tasklist /fo TABLE /nh",
-                    shell=True, capture_output=True, text=True, timeout=10
+                    shell=True, capture_output=True, text=True,
+                    encoding='utf-8', errors='replace', timeout=10
                 )
             out = (result.stdout or "").strip()
             return out[:2000] or "Sin procesos encontrados."

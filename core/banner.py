@@ -145,6 +145,27 @@ def print_automyx_banner(
         )
         print() if not RICH_AVAILABLE else None
 
+        # 5) PROMO — motor propio Vyrex GPT / Nexora Technology
+        try:
+            _msg = (
+                "[bold yellow]AUTOMYX YA LLEGÓ PARA ACABAR CON LAS IAS POTENTES[/bold yellow]\n\n"
+                "¿Qué esperas? Recarga tu API en [bold cyan]vyrexstudio.com[/bold cyan] y desata a Automyx:\n"
+                "edita videos, controla tu PC para trabajar, programa, investiga — todo con el\n"
+                "motor [bold]Vyrex GPT[/bold] (modelo propio de Nexora Technology).\n\n"
+                "Precios ridículos vs Claude/GPT · sin límites absurdos · potencia real."
+            )
+            if RICH_AVAILABLE and console:
+                from rich.panel import Panel
+                console.print(Panel(_msg, title="⚡ Vyrex GPT · Nexora Technology LLC",
+                                    border_style=BRAND_YELLOW, expand=False))
+                print()
+            else:
+                print("\n=== AUTOMYX YA LLEGÓ PARA ACABAR CON LAS IAS POTENTES ===")
+                print("¿Qué esperas? Recarga tu API en vyrexstudio.com y usa Automyx")
+                print("con el motor Vyrex GPT: edita videos, controla tu PC, programa.\n")
+        except Exception:
+            pass
+
     except Exception as e:
         # Fallback extremo: print plano
         print(ASCII_LOGO)

@@ -281,6 +281,9 @@ class AutomyxREPL:
 
         self._pt_session    = None
         self._cmd_completer = None
+        self._is_processing     = False
+        self._stop_live_fn      = None
+        self._interrupt_handled = False
         self._init_prompt_toolkit()
 
         try:
@@ -329,12 +332,30 @@ class AutomyxREPL:
                 "completion-menu.meta.completion.current":"bg:#cc6a00 #000000",
                 "scrollbar.background":                   "bg:#0d1f35",
                 "scrollbar.button":                       "bg:#1a4080",
+                "bottom-toolbar":                         "bg:#050d18 #4A6A8A noreverse",
             })
+
+            def _bottom_toolbar():
+                # Statusline en vivo estilo Claude Code: modelo · tokens sesion · costo · tareas
+                try:
+                    from core.token_tracker import get_tracker
+                    s = get_tracker().get_session_stats()
+                    tok = s.get("total_tokens", 0)
+                    tok_s = f"{tok/1000:.1f}k" if tok >= 1000 else str(tok)
+                    cost = s.get("cost_usd", 0.0)
+                    model = (getattr(self.agent, "model", None) or s.get("model") or "automyx")
+                    model = str(model).split("/")[-1][:26]
+                    turns = getattr(self, "_turn_count", 0)
+                    return [("class:bottom-toolbar",
+                             f"  ⛁ {model}  │  ↕ {tok_s} tok  │  $ {cost:.4f}  │  ☰ {turns} tareas  │  /help ")]
+                except Exception:
+                    return [("class:bottom-toolbar", "  automyx  │  /help ")]
 
             self._pt_session = PromptSession(
                 history=FileHistory(str(history_path)),
                 style=pt_style,
                 mouse_support=False,
+                bottom_toolbar=_bottom_toolbar,
             )
         except Exception:
             self._pt_session    = None
@@ -384,8 +405,11 @@ class AutomyxREPL:
                 self.session.add_to_history(user_input)
                 self._process_input(user_input)
             except KeyboardInterrupt:
-                self.console.print()
-                self.console.print(f"[{DIM}]Interrupted. Use /exit to quit.[/{DIM}]")
+                if self._interrupt_handled:
+                    self._interrupt_handled = False
+                else:
+                    self.console.print()
+                    self.console.print(f"[{DIM}]Usa /exit para salir.[/{DIM}]")
                 continue
             except EOFError:
                 self._exit()
@@ -1956,8 +1980,7 @@ Describe your project here.
         self._ensure_agent()
         try:
             from core.vision_agent import get_vision_agent
-            def _llm(msgs): return self.agent.run(msgs[-1]["content"])
-            va = get_vision_agent(_llm)
+            va = get_vision_agent()
         except Exception as e:
             self.console.print(f"  [{ERR}]Vision agent no disponible: {e}[/{ERR}]"); return
         self.console.print()
@@ -2577,6 +2600,31 @@ Describe your project here.
             if _active_tool_sp[0] is not None:
                 parts.append(_active_tool_sp[0])
             parts.append(self._make_3d_panel(status_msg, style=style))
+            # Input box visible durante el procesamiento
+            try:
+                _cols = os.get_terminal_size().columns
+            except Exception:
+                _cols = 88
+            _model_short = (self.model or "").split("/")[-1]
+            if len(_model_short) > 20:
+                _model_short = _model_short[:18] + ".."
+            _left  = f" {_model_short} "
+            _right = " Ctrl+C = cancelar "
+            _inner = _cols - 4
+            _dashes = max(2, _inner - len(_left) - len(_right))
+            _hint = Text()
+            _hint.append(f"\n  ╭─", style=f"dim {DIM_C}")
+            _hint.append(_left, style=f"bold {TEAL}")
+            _hint.append("─" * _dashes, style=f"dim {DIM_C}")
+            _hint.append(_right, style=f"bold {BLUE}")
+            _hint.append(f"─╮", style=f"dim {DIM_C}")
+            _hint.append(f"\n  │  ", style=f"dim {DIM_C}")
+            _hint.append(">>>", style=f"bold {TEAL}")
+            _hint.append("  escribe tu mensaje al terminar...", style=f"dim italic {DIM_C}")
+            _pad = max(0, _inner - 38)
+            _hint.append(" " * _pad + "│", style=f"dim {DIM_C}")
+            _hint.append(f"\n  ╰" + "─" * (_inner + 2) + "╯", style=f"dim {DIM_C}")
+            parts.append(_hint)
             return _RGroup(*parts)
 
         live = Live(
@@ -2586,6 +2634,7 @@ Describe your project here.
             transient=False,  # tool rows quedan visibles cuando Live para
         )
         live.start()
+        self._is_processing = True
 
         def _stop_live_once():
             if _live_active[0]:
@@ -2597,6 +2646,8 @@ Describe your project here.
                     live.stop()
                 except Exception:
                     pass
+
+        self._stop_live_fn = _stop_live_once
 
         def _flush_stream_buf():
             """Imprime el buffer acumulado de la respuesta final al terminal."""
@@ -2821,6 +2872,13 @@ Describe your project here.
         response    = ""
         duration    = 0.0
         agent_error = None
+        # snapshot del tracker para medir los tokens/costo de ESTE turno
+        _tok_before = None
+        try:
+            from core.token_tracker import get_tracker as _gt
+            _tok_before = dict(_gt().get_session_stats())
+        except Exception:
+            pass
         try:
             start = time.time()
             if self.autonomy and use_autonomy:
@@ -2834,6 +2892,8 @@ Describe your project here.
             agent_error = e
         finally:
             _stop_live_once()
+            self._is_processing = False
+            self._stop_live_fn  = None
             try:
                 from core.agent import set_progress_callback
                 set_progress_callback(None)
@@ -2891,14 +2951,41 @@ Describe your project here.
             _cols = 88
         _sep = chr(9472) * min(30, _cols - 20)
 
+        # metricas del turno (delta del tracker) + acumulado de sesion
+        _tin = _tout = 0
+        _tcost = 0.0
+        _sess = {}
+        try:
+            from core.token_tracker import get_tracker as _gt
+            _sess = _gt().get_session_stats()
+            if _tok_before is not None:
+                _tin = max(0, _sess.get("total_input", 0) - _tok_before.get("total_input", 0))
+                _tout = max(0, _sess.get("total_output", 0) - _tok_before.get("total_output", 0))
+                _tcost = max(0.0, _sess.get("cost_usd", 0.0) - _tok_before.get("cost_usd", 0.0))
+        except Exception:
+            pass
+        self._turn_count = getattr(self, "_turn_count", 0) + 1
+
         footer = Text()
         footer.append("  ✓ ", style="bold #00D4AA")
         footer.append(duration_str, style="bold #00AAFF")
         if _tool_count[0]:
-            footer.append(f"  ·  {_tool_count[0]} tools", style="dim #5A8090")
-        footer.append(f"  ·  {chars:,} chars", style="dim #5A8090")
+            footer.append(f"  ·  ⚒ {_tool_count[0]} tools", style="dim #5A8090")
+        if _tin or _tout:
+            footer.append(f"  ·  ↑{_tin:,} ↓{_tout:,} tok", style="dim #5A8090")
+            footer.append(f"  ·  ${_tcost:.4f}", style="dim #00D4AA")
+        else:
+            footer.append(f"  ·  {chars:,} chars", style="dim #5A8090")
         footer.append(f"  {_sep}", style="dim #1a3050")
         self.console.print(footer)
+        _stot = _sess.get("total_tokens", 0)
+        if _stot:
+            _stot_s = f"{_stot/1000:.1f}k" if _stot >= 1000 else str(_stot)
+            sline = Text()
+            sline.append("    sesión ", style="dim #33506a")
+            sline.append(f"{_stot_s} tok · ${_sess.get('cost_usd', 0.0):.4f} · {self._turn_count} tareas",
+                         style="dim #33506a")
+            self.console.print(sline)
         self.console.print()
 
     def _run_shell_direct(self, command: str):
@@ -2997,8 +3084,47 @@ Describe your project here.
     # Misc
     # ------------------------------------------------------------------
     def _handle_interrupt(self, signum, frame):
-        self.console.print()
-        self.console.print(f"[{WARN}]Interrupted. Use /exit to quit.[/]")
+        if not self._is_processing:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            self.console.print(f"[{DIM}]Usa /exit para salir.[/{DIM}]")
+            return
+
+        # Detener el Live display primero
+        if self._stop_live_fn:
+            try:
+                self._stop_live_fn()
+            except Exception:
+                pass
+
+        O  = "\033[38;2;0;212;170m"
+        B  = "\033[38;2;0;170;255m"
+        R  = "\033[38;2;255;68;68m"
+        D  = "\033[38;2;40;80;115m"
+        BD = "\033[1m"
+        RS = "\033[0m"
+
+        sys.stdout.write(f"\n\n  {BD}{O}⚡ Solicitud interrumpida{RS}\n\n")
+        sys.stdout.write(f"  {D}¿Qué deseas hacer?{RS}\n\n")
+        sys.stdout.write(f"  {BD}{B}[C]{RS}  Cancelar solicitud y continuar\n")
+        sys.stdout.write(f"  {BD}{R}[S]{RS}  Salir de Automyx\n\n")
+        sys.stdout.write(f"  {D}Opción (C/S):{RS} ")
+        sys.stdout.flush()
+
+        try:
+            choice = sys.stdin.readline().strip().lower()
+        except Exception:
+            choice = "c"
+
+        self._interrupt_handled = True
+
+        if choice in ("s", "salir", "exit", "q", "quit"):
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            self._exit()
+        else:
+            # Cancelar: interrumpir agent.run() con KBI
+            raise KeyboardInterrupt
 
     def _exit(self):
         self.running = False

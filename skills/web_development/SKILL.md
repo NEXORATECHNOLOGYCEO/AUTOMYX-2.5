@@ -1,44 +1,28 @@
 ---
 name: web_development
-description: Vaya… no se puede acceder a esta página
-localhost rechazó la conexión.
-Prueba a:
-
-Buscar localhost e
+description: acuerdate q la web está en el puerto 8000 hahahaha, otra cosa, has que yo pueda abrir la web desde m
 ---
 
 # Skill auto-generada
 
 ## Tarea original
-Vaya… no se puede acceder a esta página
-localhost rechazó la conexión.
-Prueba a:
+acuerdate q la web está en el puerto 8000 hahahaha, otra cosa, has que yo pueda abrir la web desde mi celular ocn la ip
 
-Buscar localhost en internet
-Comprobando la conexión
-Comprobar el proxy y el firewall
-ERR_CONNECTION_REFUSED
-
-## Pasos ejecutados (3 herramientas)
-1. `execute_cmd` — cd C:\Users\COMPUMAX\Downloads\world_food_catalog && node se
-2. `write_file` — C:\Users\COMPUMAX\Downloads\world_food_catalog\server.js
-3. `execute_cmd` — cd C:\Users\COMPUMAX\Downloads\world_food_catalog && npm ins
+## Pasos ejecutados (4 herramientas)
+1. `execute_cmd` — ipconfig | findstr "IPv4"
+2. `write_file` — from flask import Flask, render_template, request, redirect,
+3. `execute_cmd` — cd C:\Users\COMPUMAX\Downloads\restaurante_delicioso && pyth
+4. `execute_cmd` — timeout /t 3 /nobreak >nul && curl -s http://127.0.0.1:8000 
 
 ## Resultado
-✅ **Servidor iniciado correctamente en segundo plano.**
+✅ **Servidor actualizado y corriendo**
 
-El servidor Node.js está ahora corriendo en `http://localhost:3000` con:
+1.  **Puerto:** El sitio ahora corre en el **puerto 8000**.
+2.  **Acceso Local:** Tu IP es `192.168.1.2`.
+3.  **Desde tu Celular:** Abre el navegador de tu celular (conectado al mismo WiFi) y escribe:
 
-**📁 Archivos creados:**
-- `index.html` - Catálogo con 6 países y 18 platos diferentes
-- `server.js` - Servidor Express que sirve la página
+    ```text
+    http://192.168.1.2:8000
+    ```
 
-**🌐 Accede ahora a:**
-```
-http://localhost:3000
-```
-
-**📋 Contenido visible:**
-- **Italia**: Pasta Carbonara, Pizza Margherita, Risotto Milanés
-- **México**: Tacos al Pastor, Chiles Rellenos, Tamales
-- **Asia**: Pad Thai, Sushi, R
+¡Ya puedes ver la web y probar el Login/Registro desde cualquier dispositivo!

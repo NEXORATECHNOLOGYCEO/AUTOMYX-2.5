@@ -624,6 +624,16 @@ def register_all_tools(agent: Any) -> int:
             agent.register_tool(name, method)
             count += 1
     
+    # ── Vision Tools (visión real: NVIDIA minimax-m3 multimodal + OCR) ──
+    VisionTools = _safe_import("tools.vision_tools", "VisionTools")
+    if VisionTools:
+        for name, method in [
+            ("see_image", VisionTools.see_image),
+            ("see_screen", VisionTools.see_screen),
+        ]:
+            agent.register_tool(name, method)
+            count += 1
+
     # ── OpenCode Tools ─────────────────────────────────────────────────
     OpenCodeTools = _safe_import("tools.opencode_tools", "OpenCodeTools")
     if OpenCodeTools:
@@ -858,12 +868,25 @@ def register_all_tools(agent: Any) -> int:
             count += 1
     
     # ── Expand aliases (2500+ tools via mega_tools) ─────────────────────
+    # Estos aliases NO deben aparecer en la lista de tools que ve el LLM en su
+    # prompt (agent.py arma esa lista con las primeras 200 en orden alfabético):
+    # con ~8000 aliases tipo "haz_/hazme_/do_/make_/run_/ejecuta_X", ahogaban
+    # alfabéticamente a tools reales y básicas como execute_cmd, write_file,
+    # generate_vyrex_video o play_tiktok_desktop_video, que nunca llegaban a
+    # mostrarse. Siguen registrados y funcionan si el LLM los "adivina", solo
+    # se excluyen de la lista visible.
     try:
         from tools.mega_tools import expand_registry_aliases
         max_per_seed = int(os.environ.get("AUTOMYX_MAX_ALIAS_PER_SEED", "3"))
+        _before_alias_keys = set(agent.tools.keys())
         n_aliases = expand_registry_aliases(agent, max_per_seed=max_per_seed)
+        new_alias_names = set(agent.tools.keys()) - _before_alias_keys
+        if hasattr(agent, "_alias_tool_names"):
+            agent._alias_tool_names |= new_alias_names
+        else:
+            agent._alias_tool_names = new_alias_names
         count += n_aliases
-        logger.info(f"[mega_tools] {n_aliases} aliases coloquiales generados")
+        logger.info(f"[mega_tools] {n_aliases} aliases coloquiales generados (ocultos del prompt del LLM)")
     except Exception as e:
         logger.debug(f"mega_tools no disponible: {e}")
     

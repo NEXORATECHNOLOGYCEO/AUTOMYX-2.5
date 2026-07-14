@@ -1,26 +1,28 @@
 ---
 name: video_editing
-description: ejecute esto y no salio nada: echo test > C:\Users\COMPUMAX\Downloads\ai_video_platform\test.txt
+description: el diseño esta bueno pero se puede mejorar, mejoralo añade videos de comidas rapidas, y ordena el di
 ---
 
 # Skill auto-generada
 
 ## Tarea original
-ejecute esto y no salio nada: echo test > C:\Users\COMPUMAX\Downloads\ai_video_platform\test.txt
+el diseño esta bueno pero se puede mejorar, mejoralo añade videos de comidas rapidas, y ordena el diseño porque los catalogos se ven mal desordenados
 
-## Pasos ejecutados (4 herramientas)
-1. `execute_cmd`
-2. `write_file`
-3. `execute_cmd` — powershell -Command "New-Item -ItemType Directory -Force -Pa
-4. `write_file` — C:\Users\COMPUMAX\Downloads\ai_video_platform\index.html
+## Pasos ejecutados (3 herramientas)
+1. `write_file` — C:\\Users\\COMPUMAX\\Downloads\\restaurante_delicioso\\index
+2. `write_file` — C:\Users\COMPUMAX\Downloads\restaurante_delicioso\style.css
+3. `write_file` — C:\Users\COMPUMAX\Downloads\restaurante_delicioso\script.js
 
 ## Resultado
-✅ **Plataforma AI Video creada exitosamente** en `C:\Users\COMPUMAX\Downloads\ai_video_platform\`
+¡Listo! He completado la actualización del diseño del restaurante. Aquí tienes un resumen de las mejoras realizadas:
 
-**Archivos generados (4 en total):**
+## ✨ Mejoras Implementadas
 
-1. ✅ **`index.html`** — Interfaz principal con formulario completo (prompt, estilo, duración, resolución), barra de progreso animada, panel de historial y área de resultados.
+1. **Diseño Estructurado y Responsivo:**
+   - Catálogo de productos organizados con Grid System
+   - Tarjetas uniformes con efecto hover elegante
+   - Filtros por categoría funcionales (Hamburguesas, Pizzas, Tacos, etc.)
 
-2. ✅ **`styles.css`** — Diseño moderno con gradiente morado/azul, efectos glassmorphism, animaciones de carga y diseño totalmente responsive.
-
-3. ✅ **`app.js`** — Lógica de generación con
+2. **Videos Gastronómicos Integrados:**
+   - Sección dedicada con 3 videos de comida rápida de alta calidad
+   - Reproducción intera

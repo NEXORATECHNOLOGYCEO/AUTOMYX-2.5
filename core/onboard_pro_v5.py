@@ -314,11 +314,44 @@ class HackerOnboarding:
         if self.console:
             self.console.print(Rule(f"[bold {c}]{title}[/]", style=f"dim {c}"))
 
+    def _boot_sequence(self) -> None:
+        """Secuencia de arranque hacker: probes reales del sistema con checkmarks."""
+        import platform, shutil, time as _t
+        probes = []
+        try:
+            probes.append(("kernel", f"{platform.system()} {platform.release()}"))
+        except Exception:
+            probes.append(("kernel", "unknown"))
+        probes.append(("python", platform.python_version()))
+        try:
+            _du = shutil.disk_usage(Path.home())
+            probes.append(("storage", f"{_du.free // (1024**3)} GB libres"))
+        except Exception:
+            pass
+        try:
+            _ts = os.get_terminal_size()
+            probes.append(("terminal", f"{_ts.columns}x{_ts.lines}"))
+        except Exception:
+            pass
+        probes.append(("engine", "automyx core v2.5"))
+        self.console.print()
+        for name, val in probes:
+            line = Text()
+            line.append("  ▸ ", style=f"bold {O}")
+            line.append(f"{name:<10}", style=f"dim {DM}")
+            line.append(val, style=f"{W}")
+            line.append("  ✓", style=f"bold {G}")
+            self.console.print(line)
+            _t.sleep(0.06)
+        self.console.print()
+        _t.sleep(0.15)
+
     def _banner(self) -> None:
         if not self.console:
             print("=== AUTOMYX 2.5 — SETUP ===")
             return
         self.console.clear()
+        self._boot_sequence()
 
         # ── Ballena azul ASCII ──────────────────────────────────────────────
         whale = (
@@ -329,14 +362,19 @@ class HackerOnboarding:
         )
 
         # ── Logo AUTOMYX ────────────────────────────────────────────────────
+        _grad = ["#00FFB2", "#00F2C8", "#00E0DC", "#00CCEE", "#00B8FF", "#3D9EFF"]
+        _rows = [
+            "  ▄████████╗ ██╗   ██╗████████╗  ██████╗ ███╗   ███╗██╗   ██╗██╗  ██╗",
+            "  ██╔══════╝ ██║   ██║╚══██╔══╝ ██╔═══██╗████╗ ████║╚██╗ ██╔╝╚██╗██╔╝",
+            "  ███████╗   ██║   ██║   ██║    ██║   ██║██╔████╔██║ ╚████╔╝  ╚███╔╝ ",
+            "  ██╔════╝   ██║   ██║   ██║    ██║   ██║██║╚██╔╝██║  ╚██╔╝   ██╔██╗ ",
+            "  ███████╗   ╚██████╔╝   ██║    ╚██████╔╝██║ ╚═╝ ██║   ██║   ██╔╝ ██╗",
+            "  ╚══════╝    ╚═════╝    ╚═╝     ╚═════╝ ╚═╝     ╚═╝   ╚═╝   ╚═╝  ╚═╝",
+        ]
         logo = Text()
         logo.append("\n")
-        logo.append("  ▄████████╗ ██╗   ██╗████████╗  ██████╗ ███╗   ███╗██╗   ██╗██╗  ██╗\n", style=f"bold {O}")
-        logo.append("  ██╔══════╝ ██║   ██║╚══██╔══╝ ██╔═══██╗████╗ ████║╚██╗ ██╔╝╚██╗██╔╝\n", style=f"bold {O}")
-        logo.append("  ███████╗   ██║   ██║   ██║    ██║   ██║██╔████╔██║ ╚████╔╝  ╚███╔╝ \n", style=f"bold {B}")
-        logo.append("  ██╔════╝   ██║   ██║   ██║    ██║   ██║██║╚██╔╝██║  ╚██╔╝   ██╔██╗ \n", style=f"bold {B}")
-        logo.append("  ███████╗   ╚██████╔╝   ██║    ╚██████╔╝██║ ╚═╝ ██║   ██║   ██╔╝ ██╗\n", style=f"bold {O}")
-        logo.append("  ╚══════╝    ╚═════╝    ╚═╝     ╚═════╝ ╚═╝     ╚═╝   ╚═╝   ╚═╝  ╚═╝\n", style=f"dim {O}")
+        for _i, _row in enumerate(_rows):
+            logo.append(_row + "\n", style=f"bold {_grad[_i]}")
         logo.append("\n")
 
         self.console.print(logo)

@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 STATS_FILE = Path.home() / ".automyx" / "token_stats.json"
 
 COSTS: Dict[str, tuple[float, float]] = {
+    "vyrex": (0.50, 1.50),
     "minimax-m3": (0.20, 0.80),
     "gpt-4o": (5.00, 15.00),
     "gpt-4o-mini": (0.15, 0.60),
