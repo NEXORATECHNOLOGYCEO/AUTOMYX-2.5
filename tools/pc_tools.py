@@ -835,8 +835,55 @@ class PCTools:
         old, new = str(old), str(new)
         n = src.count(old)
         if n == 0:
-            return ("❌ old_string NO aparece exacto en el archivo. Lee el archivo con "
-                    "read_file y copia el fragmento TAL CUAL (misma indentación y saltos).")
+            # Rescate 1: coincidencia con espacios normalizados (tabs/espacios/CRLF)
+            import re as _re
+            _norm = lambda s: _re.sub(r"[ \t]+", " ", s.replace("\r\n", "\n")).strip()
+            norm_old = _norm(old)
+            if norm_old:
+                src_lines = src.splitlines(keepends=True)
+                want = max(1, len(old.splitlines()))
+                candidates = []
+                for i in range(0, max(1, len(src_lines) - want + 1)):
+                    win = "".join(src_lines[i:i + want])
+                    if _norm(win) == norm_old:
+                        candidates.append(win)
+                if len(candidates) == 1:
+                    src2 = src.replace(candidates[0], new, 1)
+                    try:
+                        p.write_text(src2, encoding="utf-8")
+                    except Exception as e:
+                        return f"❌ No se pudo escribir {path}: {e}"
+                    if str(path).endswith(".py"):
+                        try:
+                            import ast as _ast
+                            _ast.parse(src2)
+                        except SyntaxError as e:
+                            p.write_text(src, encoding="utf-8")
+                            return (f"❌ La edición rompía la sintaxis Python (línea {e.lineno}: "
+                                    f"{e.msg}) — REVERTIDA. Corrige new_string y reintenta.")
+                    return (f"✅ {path} editado (1 reemplazo — coincidencia con espacios "
+                            f"normalizados, el original difería solo en espacios/tabs).")
+            # Rescate 2: mostrar el fragmento REAL más parecido para el reintento
+            hint = ""
+            try:
+                from difflib import SequenceMatcher
+                first_line = _norm(old.splitlines()[0]) if old.splitlines() else ""
+                best_i, best_r = -1, 0.0
+                plain = src.splitlines()
+                for i, ln in enumerate(plain):
+                    r = SequenceMatcher(None, first_line, _norm(ln)).ratio()
+                    if r > best_r:
+                        best_r, best_i = r, i
+                if best_i >= 0 and best_r >= 0.55:
+                    want = max(1, len(old.splitlines()))
+                    real = "\n".join(plain[best_i:best_i + want])[:600]
+                    hint = (f"\nEl fragmento REAL más parecido (línea {best_i + 1}) es:\n"
+                            f"---\n{real}\n---\n"
+                            f"Reintenta usando ESE texto tal cual como old_string.")
+            except Exception:
+                pass
+            return ("❌ old_string NO aparece exacto en el archivo (ojo con acentos/"
+                    "emojis corruptos y espacios)." + hint)
         if n > 1 and not replace_all:
             return (f"❌ old_string aparece {n} veces — agrégale más líneas de contexto "
                     f"para que sea único, o pasa replace_all=true.")

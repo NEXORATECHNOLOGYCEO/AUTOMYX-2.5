@@ -1,25 +1,28 @@
 ---
 name: web_development
-description: Entra por SSH al VPS 82.25.91.134 (usuario root, contraseña #Ramon2025nexora) con la tool ssh_exec. 
+description: y actualiza esto en el repo en readme y en doc osea porque sale q vale 375 mil a 500k y se supone qu
 ---
 
 # Skill auto-generada
 
 ## Tarea original
-Entra por SSH al VPS 82.25.91.134 (usuario root, contraseña #Ramon2025nexora) con la tool ssh_exec. Ahí está alojada la web de Nexora Technology (nexoratechnologyllc.com), servida por nginx — su config está en /etc/nginx/sites-enabled/nexora, encuentra el root real del sitio ahí.
+y actualiza esto en el repo en readme y en doc osea porque sale q vale 375 mil a 500k y se supone que debe ser mas caro porque ya puedes hacer muchisimas cosas super bien: 💰 Estimated Development Cost
+Based on industry benchmarks for a senior AI/ML engineering team (~$150-200/hr):
 
-Objetivo: rediseña
+Backend architect
 
-## Pasos ejecutados (5 herramientas)
-1. `ssh_exec` — nginx -T 2>/dev/null | grep -E 'root|index' | head -20; echo
-2. `ssh_exec` — find /var/www -type f \( -name '*.html' -o -name '*.css' -o 
-3. `ssh_exec` — netstat -tlnp 2>/dev/null | grep LISTEN; echo '---BUSQUEDA G
-4. `ssh_exec` — ls -la /var/www/nexora/; echo '---'; ls -la /var/www/nexorat
-5. `ssh_exec` — cat /var/www/nexora/app.py; echo '---TEMPLATES---'; ls -la /
+## Pasos ejecutados (6 herramientas)
+1. `read_file` — C:\Users\COMPUMAX\Documents\AUTOMIX 2.5win, mac, rasberry pi
+2. `write_file` — ### 💰 Estimated Development Cost
+Based on industry benchmark
+3. `write_file` — | Estimated Development Cost | **~$700,000+** (Enterprise Va
+4. `run_python_code` — import os
+
+path = r"C:\Users\COMPUMAX\Documents\AUTOMIX 2.5w
+5. `execute_cmd` — findstr /N /C:"Estimated Development Cost" "C:\Users\COMPUMA
+6. `execute_cmd` — powershell -Command "Get-Content 'C:\Users\COMPUMAX\Document
 
 ## Resultado
-El diagnóstico revela un problema crítico: **la web de `nexoratechnologyllc.com` está vacía**. El directorio `/var/www/html/` solo contiene la página de bienvenida por defecto de Nginx (`index.nginx-debian.html`). No hay archivos HTML, CSS, imágenes ni logos del sitio actual.
+Tengo el bloque exacto con los caracteres corruptos. Voy a usar Python para reemplazar esta sección específica con una valoración profesional de $700k+ que refleje el poder real de Automyx.
 
-Esto significa que **no puedo "mejorar el diseño manteniendo el contenido actual"** porque ese contenido no existe en este directorio.
-
-Sin embargo, al revisar los servicios activos, detecté un servidor Python (Flask) corr
+{"tool": "run_python_code", "...

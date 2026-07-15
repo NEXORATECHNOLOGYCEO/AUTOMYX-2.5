@@ -1640,6 +1640,8 @@ class AutomyxAgent:
         recent_exact: set = set()       # detección de duplicado exacto
         tools_used_in_task: list = []   # para auto-skill-save
         _hit_iteration_limit = False    # tarea incompleta → sin auto-skill
+        _broken_json_retries = 0        # JSON de tool cortado/malformado
+        _fake_success_retries = 0       # éxito narrado sin ejecutar tools
 
         # ---- BUCLE PRINCIPAL ----
         # Safety net: ajustar segun el modelo. Modelos rapidos (M3) toleran
@@ -1883,10 +1885,17 @@ class AutomyxAgent:
                     "voy a actualizar", "voy a ejecutar", "voy a proceder", "voy a revisar",
                     "voy a analizar", "voy a cambiar", "voy a reemplazar", "voy a generar",
                     "voy a hacer", "voy a empezar", "voy a comenzar", "voy a arreglar",
-                    "procederé a", "a continuación voy", "luego voy a", "después voy a",
-                    "ahora voy a", "primero voy a", "comenzaré", "empezaré a",
-                    "el siguiente paso", "paso siguiente", "haré lo siguiente",
+                    "voy a buscar", "voy a encontrar", "voy a localizar", "voy a subir",
+                    "voy a desplegar", "voy a instalar", "voy a configurar", "voy a abrir",
+                    "voy a usar", "voy a intentar", "voy a conectar", "voy a verificar",
+                    "voy a comprobar", "voy a mover", "voy a copiar", "voy a eliminar",
+                    "procederé a", "procedo a", "a continuación voy", "luego voy a",
+                    "después voy a", "ahora voy a", "primero voy a", "comenzaré",
+                    "empezaré a", "el siguiente paso", "paso siguiente", "haré lo siguiente",
+                    "estoy buscando", "buscando el repositorio", "buscando archivos",
                     "i will now", "let me now", "i'll now", "now i'll",
+                    "let's find", "let's see", "i'll look", "i will update",
+                    "i will search", "i'm going to",
                 ]
                 _is_promise = any(p in _ai_low for p in _promise_patterns)
 
@@ -1900,6 +1909,67 @@ class AutomyxAgent:
                         "Responde ÚNICAMENTE con el JSON de la herramienta. Sin texto. Sin explicaciones."
                     )})
                     continue  # Forzar ejecución real
+
+                # ÉXITO ALUCINADO: la respuesta afirma haber hecho/desplegado cosas
+                # pero en TODA la tarea no se ejecutó ni UNA herramienta (caso real:
+                # narró búsquedas, ediciones y un deploy completos que jamás
+                # ocurrieron, con "✅ desplegado con éxito" incluido).
+                _success_claims = [
+                    "✅", "con éxito", "exitosamente", "he creado", "he actualizado",
+                    "he modificado", "he desplegado", "he subido", "he revalorizado",
+                    "ya están commit", "ya está subido", "quedó listo", "quedaron listos",
+                    "cambios realizados", "successfully", "i updated", "i've updated",
+                    "i created", "i deployed",
+                ]
+                if (not tools_used_in_task
+                        and any(s in ai_message or s in _ai_low for s in _success_claims)
+                        and _fake_success_retries < 2
+                        and iteration < max_iterations - 1):
+                    _fake_success_retries += 1
+                    _set_phase("error", "Éxito narrado sin ejecutar tools — forzando ejecución real")
+                    self.history.append({"role": "system", "content": (
+                        "🚨 ALUCINACIÓN DETECTADA: afirmas haber hecho cambios pero NO has "
+                        "ejecutado NI UNA herramienta en esta tarea — nada de lo que "
+                        "describes ocurrió en la realidad. PROHIBIDO narrar acciones o "
+                        "resultados que no vienen de un 'Resultado:' real de herramienta. "
+                        "Ejecuta AHORA la primera herramienta real (JSON puro, sin texto). "
+                        f"Tarea: '{user_input[:200]}'. "
+                        "Si la tarea de verdad no requiere herramientas, responde sin "
+                        "afirmar que hiciste ningún cambio."
+                    )})
+                    continue
+                if not tools_used_in_task and any(s in ai_message or s in _ai_low for s in _success_claims):
+                    ai_message = (
+                        "⚠ ATENCIÓN: no ejecuté ninguna herramienta en esta tarea, así que "
+                        "lo que sigue NO se aplicó de verdad. Pídeme que lo haga de nuevo "
+                        "paso a paso.\n\n" + ai_message
+                    )
+
+                # JSON de tool incrustado pero imposible de parsear: el modelo
+                # INTENTÓ una acción y el JSON salió cortado por max_tokens o
+                # malformado (caso real: run_python_code con un archivo entero
+                # dentro). NO es una respuesta final — reintentar con guía.
+                _json_pos = max(ai_message.find('{"tool"'), ai_message.find('{"action"'))
+                if _json_pos != -1:
+                    if _broken_json_retries < 2 and iteration < max_iterations - 1:
+                        _broken_json_retries += 1
+                        _set_phase("error", "JSON de herramienta cortado — reintentando en partes")
+                        self.history.append({"role": "system", "content": (
+                            "⚠️ Tu respuesta contenía un JSON de herramienta MALFORMADO o "
+                            "CORTADO por el límite de tokens — NO se ejecutó nada. Reintenta así: "
+                            "(1) responde SOLO con el JSON, sin texto antes ni después; "
+                            "(2) si el contenido es grande, DIVÍDELO: usa edit_file con fragmentos "
+                            "cortos (≤30 líneas) o write_file + append_file por partes; "
+                            "(3) NUNCA metas un archivo o script largo entero dentro de un solo "
+                            "run_python_code/write_file."
+                        )})
+                        continue
+                    # Reintentos agotados → entregar el texto SIN el JSON roto y avisar
+                    ai_message = ai_message[:_json_pos].rstrip() + (
+                        "\n\n⚠ Nota: la última acción quedó SIN ejecutar (el JSON de la "
+                        "herramienta se cortó por el límite de tokens). Pídeme \"continúa\" "
+                        "y la termino por partes."
+                    )
 
                 # No hay refusal ni promesa → es respuesta final legítima
                 _set_phase("responding", "Generando respuesta final...")
