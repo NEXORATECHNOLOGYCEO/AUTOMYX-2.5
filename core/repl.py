@@ -218,6 +218,7 @@ BUILTIN_COMMANDS = {
     "/tools":      "Listar herramientas disponibles",
     "/skills":     "Listar habilidades disponibles",
     "/auto":       "Modo totalmente autonomo",
+    "/swarm":      "Trabajos masivos: miles de tareas en paralelo",
     "/parallel":   "Ejecucion multi-agente paralela",
     "/skill":      "Forjar nueva habilidad",
     "/design":     "Capacidades de diseno",
@@ -246,6 +247,27 @@ BUILTIN_COMMANDS = {
     "/marketplace":"Marketplace de skills (search|install|list)",
     "/onboard":    "Volver al wizard de configuracion (modelo, APIs, integraciones)",
     "/exit":       "Salir",
+}
+
+# Ejemplos de uso mostrados en el preview del autocomplete (estilo Claude Code)
+_CMD_EXAMPLES: Dict[str, str] = {
+    "/auto":      "/auto crea una landing page con formulario de contacto",
+    "/swarm":     "/swarm reviews.csv plantilla:soporte_cliente",
+    "/parallel":  "/parallel investiga librerias de ML --agents 4",
+    "/model":     "/model  (abre el selector de modelos)",
+    "/skill":     "/skill deploy_app",
+    "/effort":    "/effort high",
+    "/workspace": "/workspace switch mi-proyecto",
+    "/github":    "/github prs",
+    "/rag":       "/rag search autenticacion jwt",
+    "/review":    "/review src/app.py",
+    "/docs":      "/docs readme",
+    "/vision":    "/vision C:\\Users\\...\\captura.png",
+    "/scan":      "/scan ./mi-proyecto",
+    "/export":    "/export  (guarda la conversacion en .md)",
+    "/schedule":  "/schedule add 09:00 revisa mi correo",
+    "/db":        "/db connect postgres://...",
+    "/mcp":       "/mcp connect notion",
 }
 
 
@@ -283,7 +305,6 @@ class AutomyxREPL:
         self._cmd_completer = None
         self._is_processing     = False
         self._stop_live_fn      = None
-        self._interrupt_handled = False
         self._init_prompt_toolkit()
 
         try:
@@ -300,6 +321,7 @@ class AutomyxREPL:
             from prompt_toolkit import PromptSession
             from prompt_toolkit.completion import Completer, Completion
             from prompt_toolkit.history import FileHistory
+            from prompt_toolkit.lexers import Lexer
             from prompt_toolkit.styles import Style
 
             history_path = Path.home() / ".automyx" / "prompt_history.txt"
@@ -311,27 +333,56 @@ class AutomyxREPL:
 
                 def get_completions(self_, document, complete_event):
                     text = document.text_before_cursor
-                    if not text.startswith("/"):
+                    if not text.startswith("/") or " " in text:
                         return
                     for cmd, desc in self_._cmds:
                         if cmd.startswith(text):
+                            ej = _CMD_EXAMPLES.get(cmd)
+                            meta = f"{desc}   ·   ej: {ej}" if ej else desc
                             yield Completion(
                                 cmd,
                                 start_position=-len(text),
                                 display=cmd,
-                                display_meta=desc,
+                                display_meta=meta,
                             )
 
             self._cmd_completer = _CmdCompleter(BUILTIN_COMMANDS)
 
+            class _CmdLexer(Lexer):
+                """Colorea el comando tecleado en verde-azul si existe (estilo
+                Claude Code): /auto válido → teal brillante; parcial → teal
+                tenue; desconocido → rojo suave. Los argumentos quedan blancos."""
+                _cmds = set(BUILTIN_COMMANDS)
+
+                def lex_document(self_, document):
+                    def get_line(lineno):
+                        line = document.lines[lineno]
+                        if lineno != 0 or not line.startswith("/"):
+                            return [("", line)]
+                        first, sep, rest = line.partition(" ")
+                        if first in self_._cmds:
+                            toks = [("bold #00D4AA", first)]
+                        elif any(c.startswith(first) for c in self_._cmds):
+                            toks = [("#00D4AA", first)]
+                        else:
+                            toks = [("#FF6666", first)]
+                        if sep:
+                            toks.append(("", sep))
+                        if rest:
+                            toks.append(("#F0F6FF", rest))
+                        return toks
+                    return get_line
+
+            self._cmd_lexer = _CmdLexer()
+
             pt_style = Style.from_dict({
-                "completion-menu":                        "bg:#0d1f35 #aac4e0",
-                "completion-menu.completion":             "bg:#0d1f35 #8aafcc",
-                "completion-menu.completion.current":     "bg:#00D4AA #000000 bold",
-                "completion-menu.meta.completion":        "bg:#081525 #556677",
-                "completion-menu.meta.completion.current":"bg:#cc6a00 #000000",
-                "scrollbar.background":                   "bg:#0d1f35",
-                "scrollbar.button":                       "bg:#1a4080",
+                "completion-menu":                        "bg:#0a1a2e #00D4AA",
+                "completion-menu.completion":             "bg:#0a1a2e #00D4AA",
+                "completion-menu.completion.current":     "bg:#00D4AA #001510 bold",
+                "completion-menu.meta.completion":        "bg:#081222 #5b8fb9",
+                "completion-menu.meta.completion.current":"bg:#0a6e5c #d8fff4",
+                "scrollbar.background":                   "bg:#0a1a2e",
+                "scrollbar.button":                       "bg:#00D4AA",
                 "bottom-toolbar":                         "bg:#050d18 #4A6A8A noreverse",
             })
 
@@ -343,7 +394,8 @@ class AutomyxREPL:
                     tok = s.get("total_tokens", 0)
                     tok_s = f"{tok/1000:.1f}k" if tok >= 1000 else str(tok)
                     cost = s.get("cost_usd", 0.0)
-                    model = (getattr(self.agent, "model", None) or s.get("model") or "automyx")
+                    model = (getattr(self, "model", None) or getattr(self.agent, "model", None)
+                             or s.get("model") or "automyx")
                     model = str(model).split("/")[-1][:26]
                     turns = getattr(self, "_turn_count", 0)
                     return [("class:bottom-toolbar",
@@ -357,9 +409,17 @@ class AutomyxREPL:
                 mouse_support=False,
                 bottom_toolbar=_bottom_toolbar,
             )
-        except Exception:
-            self._pt_session    = None
-            self._cmd_completer = None
+        except Exception as _pt_err:
+            # solo falta la sesión (p.ej. sin consola real); completer/lexer
+            # quedan si alcanzaron a crearse
+            self._pt_session = None
+            if not hasattr(self, "_cmd_completer"):
+                self._cmd_completer = None
+            if not hasattr(self, "_cmd_lexer"):
+                self._cmd_lexer = None
+            if os.environ.get("AUTOMYX_DEBUG"):
+                import traceback
+                traceback.print_exc()
 
     def start(self):
         """Start the REPL loop."""
@@ -405,11 +465,8 @@ class AutomyxREPL:
                 self.session.add_to_history(user_input)
                 self._process_input(user_input)
             except KeyboardInterrupt:
-                if self._interrupt_handled:
-                    self._interrupt_handled = False
-                else:
-                    self.console.print()
-                    self.console.print(f"[{DIM}]Usa /exit para salir.[/{DIM}]")
+                self.console.print()
+                self.console.print(f"[{DIM}]Usa /exit para salir.[/{DIM}]")
                 continue
             except EOFError:
                 self._exit()
@@ -432,24 +489,12 @@ class AutomyxREPL:
         except Exception:
             cols = 88
 
-        model_short = (self.model or "").split("/")[-1]
-        if len(model_short) > 22:
-            model_short = model_short[:20] + "..."
-        dir_name = _Path.cwd().name
-        if len(dir_name) > 20:
-            dir_name = dir_name[:18] + "..."
-
-        left_tag   = f" {model_short} "
-        right_tag  = f" {dir_name} "
-        inner      = cols - 4
-        mid_dashes = max(2, inner - len(left_tag) - len(right_tag))
-
+        inner = cols - 4
+        # Caja de input estilo Claude Code: minimalista, acento ✻, sin ruido
         top = (
             f"\n{D}╭─{RS}"
-            f"{BD}{O}{left_tag}{RS}"
-            f"{D}{chr(9472) * mid_dashes}{RS}"
-            f"{BD}{B}{right_tag}{RS}"
-            f"{D}─╮{RS}"
+            f"{BD}{O} ✻ {RS}"
+            f"{D}{chr(9472) * max(2, inner - 3)}╮{RS}"
         )
         bottom = f"{D}╰{chr(9472) * (inner + 2)}╯{RS}"
 
@@ -459,7 +504,7 @@ class AutomyxREPL:
             try:
                 from prompt_toolkit.formatted_text import ANSI as PT_ANSI
                 pt_prompt = PT_ANSI(
-                    f"{D}│{RS}  {BD}{O}>{RS}{BD}{R}>{RS}{BD}{B}>{RS}  "
+                    f"{D}│{RS}  {BD}{O}❯{RS}  "
                 )
                 user_input = self._pt_session.prompt(
                     pt_prompt,
@@ -467,6 +512,8 @@ class AutomyxREPL:
                     complete_while_typing=True,
                     enable_history_search=True,
                     reserve_space_for_menu=10,
+                    lexer=getattr(self, "_cmd_lexer", None),
+                    placeholder=PT_ANSI(f"{D}dale una orden — automyx la ejecuta · / para ver comandos · /auto modo autónomo{RS}"),
                 )
                 print(bottom)
                 return user_input.strip()
@@ -479,7 +526,7 @@ class AutomyxREPL:
             except Exception:
                 pass
 
-        print(f"{D}│{RS}  {BD}{O}>{RS}{BD}{R}>{RS}{BD}{B}>{RS}  ", end="", flush=True)
+        print(f"{D}│{RS}  {BD}{O}❯{RS}  ", end="", flush=True)
         try:
             user_input = input()
         except EOFError:
@@ -598,6 +645,7 @@ class AutomyxREPL:
             '/tools':     self._cmd_tools,
             '/skills':    self._cmd_skills,
             '/auto':      self._cmd_auto,
+            '/swarm':     self._cmd_swarm,
             '/parallel':  self._cmd_parallel,
             '/skill':     self._cmd_skill,
             '/design':    self._cmd_design,
@@ -1418,6 +1466,111 @@ Describe your project here.
         task = ' '.join(args)
         self._process_input(task, use_autonomy=True)
 
+    def _cmd_swarm(self, args=None):
+        """Trabajos masivos: /swarm <archivo|N> <instrucción | plantilla:nombre>"""
+        TEAL, DIM_C = "#00D4AA", "#3a5a80"
+        try:
+            from core.swarm import SwarmEngine, TEMPLATES, load_items, MAX_ITEMS, DEF_CONCURRENCY, MAX_CONCURRENCY
+        except Exception as e:
+            self.console.print(f"  [red]swarm no disponible: {e}[/red]")
+            return
+
+        if not args or args[0] in ("plantillas", "templates"):
+            self.console.print(f"""
+  [bold {TEAL}]⚡ SWARM[/bold {TEAL}] [white]— miles de tareas en paralelo (multichat masivo, hasta {MAX_ITEMS:,} items)[/white]
+
+  [dim {DIM_C}]Uso:[/dim {DIM_C}]
+    /swarm <archivo.txt|.csv|.jsonl> <instrucción>     [dim {DIM_C}]un item por línea/fila[/dim {DIM_C}]
+    /swarm <archivo> plantilla:<nombre> [extra]        [dim {DIM_C}]usa plantilla enterprise[/dim {DIM_C}]
+    /swarm <N> <instrucción con {{i}}>                   [dim {DIM_C}]N tareas sintéticas[/dim {DIM_C}]
+    /swarm conc=32 <archivo> <instrucción>             [dim {DIM_C}]concurrencia (1-{MAX_CONCURRENCY}, default {DEF_CONCURRENCY})[/dim {DIM_C}]
+
+  [dim {DIM_C}]Plantillas enterprise:[/dim {DIM_C}]""")
+            for name, t in TEMPLATES.items():
+                self.console.print(f"    [bold {TEAL}]{name:<22}[/bold {TEAL}][dim white]{t['desc']}[/dim white]")
+            self.console.print()
+            return
+
+        args = list(args)
+        conc = None
+        if args and args[0].startswith("conc="):
+            try:
+                conc = int(args.pop(0).split("=", 1)[1])
+            except ValueError:
+                pass
+
+        if not args:
+            self.console.print(f"  [dim]falta el archivo o la cantidad de items[/dim]")
+            return
+        src = args.pop(0)
+
+        template, extra = "", []
+        for a in args:
+            if a.startswith(("plantilla:", "template:")):
+                template = a.split(":", 1)[1]
+            else:
+                extra.append(a)
+        instruction = " ".join(extra)
+        if template and template not in TEMPLATES:
+            self.console.print(f"  [red]plantilla desconocida: {template}[/red] — mira /swarm plantillas")
+            return
+
+        try:
+            if src.isdigit():
+                n = min(int(src), MAX_ITEMS)
+                items = [""] * n  # sintético: el índice va en {i} de la instrucción
+                if not instruction:
+                    self.console.print(f"  [dim]con N sintético necesitas una instrucción (usa {{i}})[/dim]")
+                    return
+            else:
+                items = load_items(src)
+        except FileNotFoundError:
+            self.console.print(f"  [red]no existe el archivo: {src}[/red]")
+            return
+        if not items:
+            self.console.print(f"  [dim]el origen no tiene items[/dim]")
+            return
+        if not template and not instruction:
+            self.console.print(f"  [dim]indica una instrucción o plantilla:<nombre>[/dim]")
+            return
+
+        tok, usd = SwarmEngine.estimate(len(items), self.model)
+        conc = max(1, min(conc or DEF_CONCURRENCY, MAX_CONCURRENCY))
+        head = Text()
+        head.append("\n  ⚡ ", style=f"bold {TEAL}")
+        head.append(f"{len(items):,} items", style="bold white")
+        head.append(f"  ·  concurrencia {conc}", style=f"bold #00AAFF")
+        head.append(f"  ·  est. {self._fmt_tok(tok)} tokens ≈ ${usd:.2f}", style=f"dim {DIM_C}")
+        if template:
+            head.append(f"  ·  plantilla {template}", style=f"dim {TEAL}")
+        self.console.print(head)
+        if sys.stdin.isatty():
+            try:
+                ok = self.console.input(
+                    f"  [bold {TEAL}]❯[/bold {TEAL}] [white]¿lanzar el swarm?[/white] "
+                    f"[dim {DIM_C}]\\[s/N][/dim {DIM_C}]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                ok = "n"
+            if ok not in ("s", "si", "sí", "y", "yes"):
+                self.console.print(f"  [dim]cancelado[/dim]")
+                return
+
+        engine = SwarmEngine(model=self.model, concurrency=conc, console=self.console)
+        summary = engine.run(items, instruction=instruction, template=template)
+
+        if summary.get("ok"):
+            done_t = Text()
+            done_t.append("\n  ✓ ", style="bold #5EE6A8")
+            done_t.append(f"{summary['done']}/{summary['total']} completados", style="bold white")
+            if summary["fail"]:
+                done_t.append(f"  ·  {summary['fail']} fallos", style="bold #FF4444")
+            done_t.append(f"  ·  {summary['elapsed_s']}s  ·  {self._fmt_tok(summary['tokens'])} tokens  ·  ${summary['cost_usd']:.3f}",
+                          style=f"dim {DIM_C}")
+            self.console.print(done_t)
+            self.console.print(f"  [dim {DIM_C}]resultados → {summary['results_file']}[/dim {DIM_C}]\n")
+        else:
+            self.console.print(f"  [red]swarm falló: {summary.get('error')}[/red]")
+
     def _cmd_parallel(self, args=None):
         if not args:
             self.console.print(
@@ -1650,10 +1803,11 @@ Describe your project here.
                 )
                 if self.agent:
                     prev_hist = wm.load_current_state()
-                    if prev_hist:
-                        self.agent.load_conversation_history(prev_hist)
+                    digest = self._build_history_digest(prev_hist)
+                    if digest:
+                        self.agent.inject_memory_context(digest)
                         self.console.print(
-                            f"  [{DIM_}]* {len(prev_hist)} mensajes restaurados del workspace[/{DIM_}]"
+                            f"  [{DIM_}]* resumen del workspace inyectado como contexto[/{DIM_}]"
                         )
             except FileNotFoundError:
                 self.console.print(
@@ -1838,13 +1992,37 @@ Describe your project here.
         self.console.print()
 
     # ── Scheduler ──────────────────────────────────────────────────────────
+    @staticmethod
+    def _parse_when(when: str):
+        """'09:00' → cron diario · 'cada 30m' / '30m' → cada N min ·
+        'lunes 09:00' → semanal · cron crudo de 5 campos → tal cual."""
+        import re as _re
+        w = when.strip().lower()
+        if len(w.split()) == 5 and any(c in w for c in "*/"):
+            return when.strip(), when.strip()
+        m = _re.fullmatch(r"(?:cada\s*)?(\d{1,3})\s*m(?:in)?", w)
+        if m:
+            return f"*/{m.group(1)} * * * *", f"cada {m.group(1)} min"
+        dias = {"lunes": 0, "martes": 1, "miercoles": 2, "miércoles": 2,
+                "jueves": 3, "viernes": 4, "sabado": 5, "sábado": 5, "domingo": 6}
+        m = _re.fullmatch(r"(\w+)\s+(\d{1,2}):(\d{2})", w)
+        if m and m.group(1) in dias:
+            h, mi = int(m.group(2)), int(m.group(3))
+            return f"{mi} {h} * * {dias[m.group(1)]}", f"{m.group(1)} {h:02d}:{mi:02d}"
+        m = _re.fullmatch(r"(\d{1,2}):(\d{2})", w)
+        if m:
+            h, mi = int(m.group(1)), int(m.group(2))
+            return f"{mi} {h} * * *", f"todos los días {h:02d}:{mi:02d}"
+        return None, None
+
     def _cmd_schedule(self, args=None):
         ORANGE = "#00D4AA"; BLUE = "#00AAFF"; GREEN = "#5EE6A8"; DIM_ = "#5A7090"
         sub = args[0].lower() if args else "list"
         try:
-            from core.scheduler import get_scheduler
+            from core.scheduler import (get_scheduler, create_windows_task,
+                                        delete_windows_task, REPORTS_DIR)
             sch = get_scheduler(agent_runner=lambda t, w: (self._ensure_agent(), self.agent.run(t)) and "ok")
-            if not sch._running:
+            if not (sch._thread and sch._thread.is_alive()):
                 sch.start_background()
         except Exception as e:
             self.console.print(f"  [{ERR}]Scheduler no disponible: {e}[/{ERR}]"); return
@@ -1852,25 +2030,63 @@ Describe your project here.
         if sub == "list":
             schedules = sch.list_all()
             if not schedules:
-                self.console.print(f"  [{DIM_}]Sin tareas programadas. Usa /schedule add \"cron\" \"tarea\"[/{DIM_}]")
+                self.console.print(f"  [{DIM_}]Sin tareas programadas.[/{DIM_}]")
+                self.console.print(f"  [{DIM_}]Ej: /schedule add 09:00 revisa https://miapp.com y arregla lo que falle[/{DIM_}]")
             else:
                 tbl = Table(box=ROUNDED, border_style=BLUE, show_header=True, header_style=f"bold {ORANGE}")
-                tbl.add_column("ID", style=DIM_, width=10); tbl.add_column("Cron", style=BLUE, width=14)
-                tbl.add_column("Tarea", style="#F0F6FF", max_width=40); tbl.add_column("Estado", width=10)
+                tbl.add_column("ID", style=DIM_, width=10); tbl.add_column("Cuándo", style=BLUE, width=16)
+                tbl.add_column("Tarea", style="#F0F6FF", max_width=44)
+                tbl.add_column("Última vez", style=DIM_, width=17); tbl.add_column("", width=3)
                 for s in schedules:
-                    tbl.add_row(s['id'][:8], s['cron'], s['task'][:38], GREEN+"✓" if s['enabled'] else DIM_+"⏸")
+                    last = (s.get("last_run") or "nunca")[:16].replace("T", " ")
+                    tbl.add_row(s['id'][:8], s.get('when', s['cron']), s['task'][:42],
+                                last, GREEN + "✓" if s['enabled'] else DIM_ + "⏸")
                 self.console.print(tbl)
+                self.console.print(f"  [{DIM_}]reportes en {REPORTS_DIR}[/{DIM_}]")
         elif sub == "add" and len(args) >= 3:
-            sid = sch.add(args[1], " ".join(args[2:]))
-            self.console.print(f"  [{GREEN}]Tarea programada. ID: {sid[:8]}[/{GREEN}]")
+            cron, desc = self._parse_when(args[1])
+            if not cron:
+                self.console.print(f"  [{ERR}]No entendí '{args[1]}'. Usa: 09:00 · cada 30m · lunes 08:00 · o cron de 5 campos[/{ERR}]")
+                return
+            task = " ".join(args[2:])
+            sid = sch.add(cron, task)
+            for s in sch._schedules:
+                if s["id"] == sid:
+                    s["when"] = desc
+            from core.scheduler import _save_schedules as _ss
+            _ss(sch._schedules)
+            self.console.print(f"  [{GREEN}]✓ Tarea programada[/{GREEN}]  [{DIM_}]{sid[:8]} · {desc}[/{DIM_}]")
+            try:
+                wdesc = create_windows_task(sid, cron)
+                self.console.print(f"  [{GREEN}]✓ Auto-encendido activado[/{GREEN}]  "
+                                   f"[{DIM_}]Windows lanzará Automyx {wdesc} aunque esté cerrado[/{DIM_}]")
+            except Exception as we:
+                self.console.print(f"  [dim #FF8C00]⚠ sin auto-encendido de Windows ({str(we)[:80]}) — "
+                                   f"correrá solo con Automyx abierto[/dim #FF8C00]")
         elif sub == "remove" and len(args) >= 2:
-            sch.remove(args[1])
-            self.console.print(f"  [{GREEN}]Tarea eliminada.[/{GREEN}]")
+            full = next((s["id"] for s in sch.list_all() if s["id"].startswith(args[1])), args[1])
+            sch.remove(full)
+            delete_windows_task(full)
+            self.console.print(f"  [{GREEN}]Tarea y auto-encendido eliminados.[/{GREEN}]")
         elif sub == "run" and len(args) >= 2:
-            sch.run_now(args[1])
+            full = next((s["id"] for s in sch.list_all() if s["id"].startswith(args[1])), args[1])
+            sch.run_now(full)
             self.console.print(f"  [{BLUE}]Ejecutando en background...[/{BLUE}]")
+        elif sub in ("runs", "reportes"):
+            try:
+                reports = sorted(REPORTS_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)[:8]
+            except Exception:
+                reports = []
+            if not reports:
+                self.console.print(f"  [{DIM_}]Sin reportes todavía.[/{DIM_}]")
+            for rp in reports:
+                self.console.print(f"  [{BLUE}]▸[/{BLUE}] [#F0F6FF]{rp.name}[/#F0F6FF]  [{DIM_}]{rp}[/{DIM_}]")
         else:
-            self.console.print(f"  [{DIM_}]Uso: /schedule list | add \"0 9 * * 1\" \"tarea\" | remove <id> | run <id>[/{DIM_}]")
+            self.console.print(f"""  [{DIM_}]Uso:[/{DIM_}]
+    /schedule add 09:00 revisa https://miapp.com, diagnostica y arregla lo que falle
+    /schedule add cada 30m verifica que el backend responda
+    /schedule add lunes 08:00 resumen semanal del servidor
+    /schedule list · runs · run <id> · remove <id>""")
         self.console.print()
 
     # ── Code Review ────────────────────────────────────────────────────────
@@ -2419,19 +2635,31 @@ Describe your project here.
                 from core.onboard_pro_v5 import inject_notion_into_agent
                 _n_notion = inject_notion_into_agent(self.agent)
                 if _n_notion:
-                    self.console.print(f"  [{DIM}]* {_n_notion} tools de Notion cargadas[/{DIM}]")
+                    pass  # se resume en la linea unica de abajo
             except Exception:
                 pass
             total = len(self.agent.tools)
-            self.console.print(f"  [{DIM}]* {total} herramientas cargadas[/{DIM}]")
+            _sline = Text()
+            _sline.append("  ⎿ ", style=f"dim #3a5a80")
+            _sline.append(f"{total} tools listas", style=f"dim #6888A8")
+            try:
+                if _n_notion:
+                    _sline.append(f" · notion {_n_notion}", style=f"dim #6888A8")
+            except Exception:
+                pass
+            self.console.print(_sline)
 
             if self.memory:
                 try:
+                    # Sesiones anteriores: RESUMEN de referencia en el system prompt,
+                    # nunca los mensajes crudos en el historial — el modelo los
+                    # confundía con la conversación actual y continuaba tareas viejas.
                     prev_hist = self.memory.load_agent_history()
-                    if prev_hist:
-                        self.agent.load_conversation_history(prev_hist)
+                    digest = self._build_history_digest(prev_hist)
+                    if digest:
+                        self.agent.inject_memory_context(digest)
                         self.console.print(
-                            f"  [{DIM}]* {len(prev_hist)} mensajes de historial restaurados[/{DIM}]"
+                            f"  [dim #3a5a80]⎿ [/][dim #6888A8]memoria · resumen de sesión anterior cargado[/]"
                         )
                     facts_ctx = self.memory.get_facts_context()
                     if facts_ctx:
@@ -2442,6 +2670,41 @@ Describe your project here.
                 except Exception:
                     pass
 
+    @staticmethod
+    def _build_history_digest(prev_hist: list, max_pairs: int = 6) -> str:
+        """Convierte el historial de la sesión anterior en un resumen compacto
+        (pedido → resultado) para el system prompt. Se saltan los mensajes de
+        resultados de tools (van con role=user pero no son órdenes reales)."""
+        if not prev_hist:
+            return ""
+        _TOOL_MSG_PREFIXES = ("Resultados de herramientas", "Herramienta ", "[Tool ")
+        pairs = []
+        cur_user = None
+        for m in prev_hist:
+            role = m.get("role", "")
+            content = m.get("content", "")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            if role == "user":
+                if content.strip().startswith(_TOOL_MSG_PREFIXES):
+                    continue
+                cur_user = " ".join(content.split())[:150]
+            elif role == "assistant" and cur_user:
+                pairs.append((cur_user, " ".join(content.split())[:150]))
+                cur_user = None
+        if cur_user:
+            pairs.append((cur_user, "(sin respuesta registrada)"))
+        if not pairs:
+            return ""
+        lines = [
+            "[SESIÓN ANTERIOR — resumen de referencia. Esas tareas YA TERMINARON: "
+            "no las continúes ni las repitas por tu cuenta; atiende solo la orden "
+            "actual del usuario.]"
+        ]
+        for u, a in pairs[-max_pairs:]:
+            lines.append(f"- Pedido: {u} → Resultado: {a}")
+        return "\n".join(lines)
+
     def _ensure_autonomy(self):
         if not self.autonomy:
             try:
@@ -2449,6 +2712,82 @@ Describe your project here.
                 self.autonomy = AutonomyCore(model=self.model, console=self.console)
             except Exception:
                 self.autonomy = None
+
+    def _estimate_auto_cost(self, n: int):
+        """(tokens, usd) estimados para n agentes — medido: ~90k tok por agente
+        (Soul.md + iteraciones) + integrador ~120k cuando hay equipo."""
+        total = 90_000 * n + (120_000 if n >= 2 else 0)
+        try:
+            from core.token_tracker import _cost_for
+            usd = _cost_for(self.model, int(total * 0.97), int(total * 0.03))
+        except Exception:
+            usd = total / 1_000_000 * 0.5
+        return total, usd
+
+    @staticmethod
+    def _fmt_tok(n: int) -> str:
+        return f"~{n/1_000_000:.1f}M" if n >= 1_000_000 else f"~{n//1000}k"
+
+    def _ask_agent_count(self, analysis) -> int:
+        """Selector de agentes paralelos para /auto con costo escalado en vivo."""
+        try:
+            from core.autonomy import AutonomyCore
+            mx = AutonomyCore.MAX_AGENTS
+        except Exception:
+            mx = 100
+        rec = max(1, min(int(getattr(analysis, "num_agents_needed", 1) or 1), mx))
+        if not sys.stdin.isatty():
+            return rec
+
+        TEAL, DIM_C = "#00D4AA", "#3a5a80"
+        from rich.text import Text
+        self.console.print()
+        hdr = Text()
+        hdr.append("  ⚡ ", style=f"bold {TEAL}")
+        hdr.append("¿Cuántos agentes trabajan en paralelo?", style="bold white")
+        hdr.append(f"  (1-{mx} · recomendado: {rec})", style=f"dim {DIM_C}")
+        self.console.print(hdr)
+        self.console.print()
+
+        row = Text("      ")
+        row.append("agentes", style=f"dim {DIM_C}")
+        row.append("     tokens est.", style=f"dim {DIM_C}")
+        row.append("    costo est.", style=f"dim {DIM_C}")
+        self.console.print(row)
+        for n in sorted({1, rec, 5, 10, 25, 50, mx}):
+            if n > mx:
+                continue
+            tok, usd = self._estimate_auto_cost(n)
+            r = Text("      ")
+            mark = "❯ " if n == rec else "  "
+            r.append(f"{mark}{n:<6}", style=f"bold {TEAL}" if n == rec else "white")
+            r.append(f"    {self._fmt_tok(tok):<12}", style=f"dim white")
+            r.append(f"   ${usd:.2f}", style=f"dim {TEAL}")
+            if n == rec:
+                r.append("   ← recomendado", style=f"dim {DIM_C}")
+            self.console.print(r)
+        self.console.print()
+
+        try:
+            raw = self.console.input(
+                f"  [bold {TEAL}]❯[/bold {TEAL}] [white]número de agentes[/white] "
+                f"[dim {DIM_C}]\\[{rec}][/dim {DIM_C}]: ").strip()
+            n = int(raw) if raw else rec
+        except (ValueError, EOFError, KeyboardInterrupt):
+            n = rec
+        n = max(1, min(n, mx))
+
+        tok, usd = self._estimate_auto_cost(n)
+        pick = Text()
+        pick.append("  ✓ ", style=f"bold {TEAL}")
+        pick.append(f"{n} agente{'s' if n > 1 else ''}", style="bold white")
+        pick.append(f"  ·  {self._fmt_tok(tok)} tokens  ·  ≈${usd:.2f}", style=f"dim {DIM_C}")
+        self.console.print(pick)
+        if n > 8:
+            self.console.print(
+                f"  [dim #FF8C00]⚠ con {n} agentes el modelo atiende ~4 peticiones a la vez — "
+                f"el resto hace cola (más tiempo total, mismo costo)[/dim #FF8C00]")
+        return n
 
     def _make_3d_panel(self, message: str, style: str = "orange", step_info: str = ""):
         """Panel 3D con doble borde y sombra inferior — diseño elite."""
@@ -2540,6 +2879,23 @@ Describe your project here.
         self._reset_progress_state()
         self._auto_save_inline_token(user_input)
 
+        # /auto: análisis ANTES de abrir el Live (la tabla imprime limpia y el
+        # orquestador multi-agente abre su propio Live — no pueden convivir)
+        _auto_analysis = None
+        _auto_multi = False
+        if use_autonomy and self.autonomy:
+            try:
+                _auto_analysis = self.autonomy.analyze_only(user_input)
+                _n = self._ask_agent_count(_auto_analysis)
+                _auto_analysis.num_agents_needed = _n
+                _auto_analysis.needs_agents = _n >= 2
+                _auto_multi = self.autonomy.needs_orchestrator(_auto_analysis)
+            except KeyboardInterrupt:
+                self.console.print("\n  [dim]⚡ Análisis cancelado.[/dim]")
+                return
+            except Exception as _ae:
+                self.console.print(f"  [dim]análisis autónomo falló ({_ae}) — ejecución directa[/dim]")
+
         self.console.print()
 
         from rich.live import Live
@@ -2570,61 +2926,66 @@ Describe your project here.
         _compact_done   = [0]
         _compact_fail   = [0]
         _compact_row_idx = [-1]    # índice en _tool_rows de la fila de progreso compacta
+        _t0 = [time.time()]        # inicio del turno (para el elapsed de la status line)
+        _tok_before = None         # snapshot del tracker (tokens del turno en status/footer)
+        try:
+            from core.token_tracker import get_tracker as _gt0
+            _tok_before = dict(_gt0().get_session_stats())
+        except Exception:
+            pass
+
+        _VERBS = ["Pensando", "Analizando", "Orquestando", "Sintetizando",
+                  "Tramando", "Compilando ideas", "Enlazando tools", "Ejecutando"]
+        _STARS = ["✻", "✳", "✶", "✽", "✻", "·"]
 
         def _make_live_display(status_msg="Procesando...", style="blue"):
+            # Estilo Claude Code: filas permanentes de tools arriba + UNA status line
+            # animada abajo: "✻ Verbo… (12s · ↑ 3.4k tokens · ctrl+c interrumpe)"
             parts = list(_tool_rows)
-            # Preview del texto del modelo — solo texto humano, nunca JSON
+
+            # narración/preview del modelo (solo texto humano, nunca JSON)
             cur = _stream_buf[0].strip()
             if cur and not _final_ok[0]:
-                # Recortar hasta el primer JSON
                 for _marker in ('{"action"', '{"tool"', '\n{"', '```json'):
                     _ji = cur.find(_marker)
                     if _ji == 0:
                         cur = ""; break
                     elif _ji > 0:
                         cur = cur[:_ji].strip(); break
-                # Descartar si parece fragmento de JSON (sin texto antes)
-                _is_json_frag = (
-                    cur.startswith("{") or cur.startswith('"action"') or
-                    cur.endswith("}}") or cur.endswith('"}') or
-                    '"args"' in cur or '"action"' in cur
-                )
-                if _is_json_frag:
+                if cur and (cur.startswith("{") or cur.startswith('"action"')
+                            or cur.endswith("}}") or cur.endswith('"}')):
                     cur = ""
                 if cur:
-                    preview = cur[-80:] if len(cur) > 80 else cur
-                    st = Text()
-                    st.append("  ", style="")
-                    st.append(preview, style="dim italic #506070")
-                    parts.append(st)
+                    prev = Text()
+                    prev.append("  ✻ ", style="dim #00D4AA")
+                    prev.append(cur[-160:].replace("\n", " "), style="dim italic #6888A8")
+                    parts.append(prev)
+
             if _active_tool_sp[0] is not None:
                 parts.append(_active_tool_sp[0])
-            parts.append(self._make_3d_panel(status_msg, style=style))
-            # Input box visible durante el procesamiento
+
+            # status line animada
+            _el = time.time() - _t0[0]
+            _star = _STARS[int(_el * 3) % len(_STARS)]
+            _verb = status_msg.rstrip(".…") if status_msg else _VERBS[int(_el / 2.5) % len(_VERBS)]
+            _tok_txt = ""
             try:
-                _cols = os.get_terminal_size().columns
+                from core.token_tracker import get_tracker as _gt_s
+                _st = _gt_s().get_session_stats()
+                _tt = _st.get("total_tokens", 0)
+                if _tok_before is not None:
+                    _tt = max(0, _tt - _tok_before.get("total_tokens", 0))
+                if _tt >= 1000:
+                    _tok_txt = f" · ↑ {_tt/1000:.1f}k tokens"
+                elif _tt > 0:
+                    _tok_txt = f" · ↑ {_tt} tokens"
             except Exception:
-                _cols = 88
-            _model_short = (self.model or "").split("/")[-1]
-            if len(_model_short) > 20:
-                _model_short = _model_short[:18] + ".."
-            _left  = f" {_model_short} "
-            _right = " Ctrl+C = cancelar "
-            _inner = _cols - 4
-            _dashes = max(2, _inner - len(_left) - len(_right))
-            _hint = Text()
-            _hint.append(f"\n  ╭─", style=f"dim {DIM_C}")
-            _hint.append(_left, style=f"bold {TEAL}")
-            _hint.append("─" * _dashes, style=f"dim {DIM_C}")
-            _hint.append(_right, style=f"bold {BLUE}")
-            _hint.append(f"─╮", style=f"dim {DIM_C}")
-            _hint.append(f"\n  │  ", style=f"dim {DIM_C}")
-            _hint.append(">>>", style=f"bold {TEAL}")
-            _hint.append("  escribe tu mensaje al terminar...", style=f"dim italic {DIM_C}")
-            _pad = max(0, _inner - 38)
-            _hint.append(" " * _pad + "│", style=f"dim {DIM_C}")
-            _hint.append(f"\n  ╰" + "─" * (_inner + 2) + "╯", style=f"dim {DIM_C}")
-            parts.append(_hint)
+                pass
+            _sl = Text()
+            _sl.append(f"\n  {_star} ", style=f"bold {TEAL}")
+            _sl.append(f"{_verb}… ", style=f"bold {TEAL}")
+            _sl.append(f"({int(_el)}s{_tok_txt} · ctrl+c interrumpe)", style=f"dim {DIM_C}")
+            parts.append(_sl)
             return _RGroup(*parts)
 
         live = Live(
@@ -2660,7 +3021,7 @@ Describe your project here.
             _RS = "\033[0m"
             if not _header_printed[0]:
                 _header_printed[0] = True
-                sys.stdout.write(f"\n  {_BD}{_T}>> Automyx{_RS}\n\n")
+                sys.stdout.write(f"\n  {_BD}{_T}⏺{_RS} ")
                 sys.stdout.write(text)
             else:
                 # header ya impreso → sólo añadir salto + texto
@@ -2708,10 +3069,16 @@ Describe your project here.
                         or '"args"' in narration or narration.endswith("}}")
                     ):
                         narration = ""
-                if narration:
+                if narration and len(narration) >= 12:
+                    _nt = narration[:150]
+                    if len(narration) > 150:
+                        _sp_i = _nt.rfind(" ")
+                        if _sp_i > 100:
+                            _nt = _nt[:_sp_i]
+                        _nt += "…"
                     narr_row = Text()
-                    narr_row.append("  ", style="")
-                    narr_row.append(narration[:120], style="dim italic #6888A8")
+                    narr_row.append("  ✻ ", style="dim #00D4AA")
+                    narr_row.append(_nt, style="dim italic #6888A8")
                     _tool_rows.append(narr_row)
                 _stream_buf[0] = ""
                 _final_ok[0]   = False
@@ -2724,15 +3091,49 @@ Describe your project here.
                 _last_tool[0]    = tool_name
                 _last_tool_args[0] = args_sum
 
-                # En modo compacto (planes grandes) no mostramos spinner por tool
+                # Estilo Claude Code: viñeta ⏺ permanente + estado ⎿ animado debajo
+                _SHELL_TOOLS = {"execute_cmd", "use_terminal_window", "npm_run", "run_python"}
+                _CODE_TOOLS  = {"run_python_code"}
+                cmd_full = (extras.get("tool_cmd") or "").strip()
                 if not _compact_mode[0]:
-                    inner = Text()
-                    inner.append(f"  {tool_name}", style="bold white")
-                    if args_sum:
-                        inner.append(f"  {args_sum}", style="dim")
+                    brow = Text()
+                    brow.append("  ⏺ ", style=f"bold {TEAL}")
+                    if cmd_full and tool_name in _SHELL_TOOLS:
+                        brow.append("Ejecutando comando…", style="bold white")
+                        _tool_rows.append(brow)
+                        _c1 = cmd_full.replace("\n", " ⏎ ")
+                        crow = Text()
+                        crow.append("    ⎿ ", style=f"dim {DIM_C}")
+                        crow.append("$ ", style=f"bold {TEAL}")
+                        crow.append(_c1[:180] + ("…" if len(_c1) > 180 else ""), style="dim white")
+                        _tool_rows.append(crow)
+                    elif cmd_full and tool_name in _CODE_TOOLS:
+                        _nlines = cmd_full.count("\n") + 1
+                        brow.append("Ejecutando script python…", style="bold white")
+                        brow.append(f"  ({_nlines} líneas)", style=f"dim {DIM_C}")
+                        _tool_rows.append(brow)
+                        _c1 = next((l.strip() for l in cmd_full.splitlines() if l.strip()), "")
+                        crow = Text()
+                        crow.append("    ⎿ ", style=f"dim {DIM_C}")
+                        crow.append(">>> ", style=f"bold {TEAL}")
+                        crow.append(_c1[:150] + ("…" if len(_c1) > 150 or _nlines > 1 else ""), style="dim white")
+                        _tool_rows.append(crow)
+                    else:
+                        brow.append(tool_name, style="bold white")
+                        if args_sum:
+                            brow.append(f"({args_sum})", style=f"dim {DIM_C}")
+                        _tool_rows.append(brow)
                     if rationale:
-                        inner.append(f"\n    {rationale}", style="dim italic")
-                    _active_tool_sp[0] = _RSpinner("dots", text=inner)
+                        rrow = Text()
+                        rrow.append(f"    {rationale}", style="dim italic #6888A8")
+                        _tool_rows.append(rrow)
+                    inner = Text()
+                    inner.append("  corriendo…", style=f"dim {DIM_C}")
+                    _sp = _RSpinner("dots", text=inner)
+                    _sp_row = Text()
+                    _sp_row.append("    ⎿ ", style=f"dim {DIM_C}")
+                    from rich.columns import Columns as _RCols
+                    _active_tool_sp[0] = _RCols([_sp_row, _sp], padding=0)
 
                 if _live_active[0]:
                     status = f"Ejecutando {_compact_done[0]}/{_compact_total[0]}..." if _compact_mode[0] else f"{tool_name}..."
@@ -2747,39 +3148,33 @@ Describe your project here.
                 _active_tool_sp[0] = None
 
                 if _compact_mode[0]:
-                    # Modo compacto: actualizar la fila de progreso en lugar de añadir nuevas
+                    # Checklist: marcar ☒ el paso recien completado
+                    _idx = _compact_row_idx[0] + _compact_done[0]
                     _compact_done[0] += 1
-                    done_n   = _compact_done[0]
-                    total_n  = _compact_total[0]
-                    fail_n   = _compact_fail[0]
-                    pct      = int(done_n / total_n * 100) if total_n else 0
-                    filled   = int(done_n / total_n * 22) if total_n else 0
-                    upd = Text()
-                    upd.append("  ✓  ", style=f"bold {GREEN}")
-                    upd.append("━" * filled, style=TEAL)
-                    upd.append("─" * (22 - filled), style="dim")
-                    upd.append(f"  {done_n}/{total_n}", style=f"bold {TEAL}")
-                    if fail_n:
-                        upd.append(f"  ({fail_n} errores)", style=f"dim {RED}")
-                    idx = _compact_row_idx[0]
-                    if 0 <= idx < len(_tool_rows):
-                        _tool_rows[idx] = upd
+                    if 0 <= _idx < len(_tool_rows) and _compact_done[0] <= 10:
+                        _old_txt = _tool_rows[_idx].plain.replace("☐", "").strip()
+                        _nr = Text()
+                        _nr.append("    ☒ ", style=f"bold {GREEN}")
+                        _nr.append(_old_txt, style="dim white strike")
+                        if dur:
+                            _ts = f"{dur/1000:.1f}s" if dur >= 1000 else f"{dur}ms"
+                            _nr.append(f" · {_ts}", style=f"dim {DIM_C}")
+                        _tool_rows[_idx] = _nr
                     if _live_active[0]:
-                        live.update(_make_live_display("Procesando...", style="blue"))
+                        _dn, _tn = _compact_done[0], _compact_total[0]
+                        live.update(_make_live_display(f"Orquestando {_dn}/{_tn}", style="blue"))
                     return
 
-                # Usar tool_name de extras (thread-safe) con fallback a _last_tool
+                # Estilo Claude Code: la viñeta ⏺ ya está arriba; aquí solo el cierre ⎿
                 done_tool = extras.get("tool_name") or _last_tool[0]
-                done_args = _last_tool_args[0] if extras.get("tool_name") == _last_tool[0] else ""
-
                 done = Text()
-                done.append("  ✓  ", style=f"bold {GREEN}")
-                done.append(done_tool, style="bold white")
-                if done_args:
-                    done.append(f"  {done_args}", style="dim")
+                done.append("    ⎿ ", style=f"dim {DIM_C}")
+                done.append("✓ hecho", style=f"bold {GREEN}")
                 if dur:
                     t_str = f"{dur / 1000:.1f}s" if dur >= 1000 else f"{dur}ms"
-                    done.append(f"  ({t_str})", style=f"dim {GREEN}")
+                    done.append(f" · {t_str}", style=f"dim {DIM_C}")
+                if done_tool and done_tool != _last_tool[0]:
+                    done.append(f" · {done_tool}", style=f"dim {DIM_C}")
                 _tool_rows.append(done)
 
                 # Barra de progreso cuando hay múltiples pasos
@@ -2809,8 +3204,9 @@ Describe your project here.
                         live.update(_make_live_display("Reintentando...", style="red"))
                     return
                 err_row = Text()
-                err_row.append("  ✗  ", style=f"bold {RED}")
-                err_row.append(str(action)[:110], style="dim")
+                err_row.append("    ⎿ ", style=f"dim {DIM_C}")
+                err_row.append("✗ ", style=f"bold {RED}")
+                err_row.append(str(action)[:110], style=f"dim {RED}")
                 _tool_rows.append(err_row)
                 if _live_active[0]:
                     live.update(_make_live_display("Reintentando...", style="red"))
@@ -2822,20 +3218,29 @@ Describe your project here.
                 _compact_done[0] = 0
                 _compact_fail[0] = 0
                 _compact_row_idx[0] = -1
-                n = len(extras.get("plan", []) or [])
+                _plan = extras.get("plan", []) or []
+                n = len(_plan)
                 if n > 0:
                     plan_row = Text()
-                    plan_row.append("  ≡  ", style=f"bold {TEAL}")
-                    plan_row.append(f"Plan: {n} pasos", style=f"dim {TEAL}")
+                    plan_row.append("  ☰ ", style=f"bold {TEAL}")
+                    plan_row.append(f"plan · {n} pasos", style="bold white")
                     _tool_rows.append(plan_row)
-                    if n > 6:
-                        _compact_mode[0]  = True
-                        _compact_total[0] = n
-                        # Reservar fila de progreso compacta (mutable via índice)
-                        prog_row = Text()
-                        prog_row.append(f"  ⠋  0/{n} completados", style=f"dim {TEAL}")
-                        _tool_rows.append(prog_row)
-                        _compact_row_idx[0] = len(_tool_rows) - 1
+                    # Checklist estilo Claude Code (todo-list): ☐ → ☒ al completarse
+                    _compact_mode[0]  = True
+                    _compact_total[0] = n
+                    _compact_row_idx[0] = len(_tool_rows)  # inicio de la checklist
+                    _MAXROWS = 10
+                    for _pi, _ps in enumerate(_plan[:_MAXROWS]):
+                        _pt = str(_ps.get("description") or _ps.get("task") or _ps
+                                  if isinstance(_ps, dict) else _ps)[:88]
+                        _pr = Text()
+                        _pr.append("    ☐ ", style=f"dim {DIM_C}")
+                        _pr.append(_pt, style=f"dim {DIM_C}")
+                        _tool_rows.append(_pr)
+                    if n > _MAXROWS:
+                        _pr = Text()
+                        _pr.append(f"    … +{n - _MAXROWS} pasos más", style=f"dim {DIM_C}")
+                        _tool_rows.append(_pr)
                 return
 
             if phase == "learning":
@@ -2872,21 +3277,24 @@ Describe your project here.
         response    = ""
         duration    = 0.0
         agent_error = None
-        # snapshot del tracker para medir los tokens/costo de ESTE turno
-        _tok_before = None
+        interrupted = False
+        start       = time.time()
         try:
-            from core.token_tracker import get_tracker as _gt
-            _tok_before = dict(_gt().get_session_stats())
-        except Exception:
-            pass
-        try:
-            start = time.time()
-            if self.autonomy and use_autonomy:
-                result   = self.autonomy.execute_autonomously(user_input)
-                response = result.get("ejecucion", result.get("execution", "Done."))
+            if self.autonomy and use_autonomy and _auto_analysis is not None:
+                if _auto_multi:
+                    # el orquestador trae su propio Live — ceder la pantalla
+                    _stop_live_once()
+                result = self.autonomy.execute_autonomously(
+                    user_input, agent=self.agent,
+                    progress_callback=None if _auto_multi else progress_cb,
+                    analysis=_auto_analysis)
+                response = result.get("ejecucion", result.get("execution", "")) or ""
             else:
                 response = self.agent.run(user_input, progress_callback=progress_cb)
             duration = time.time() - start
+        except KeyboardInterrupt:
+            duration    = time.time() - start
+            interrupted = True
         except Exception as e:
             duration    = time.time() - start
             agent_error = e
@@ -2895,10 +3303,24 @@ Describe your project here.
             self._is_processing = False
             self._stop_live_fn  = None
             try:
+                if self.agent is not None:
+                    self.agent._cancel_requested = False
+            except Exception:
+                pass
+            try:
                 from core.agent import set_progress_callback
                 set_progress_callback(None)
             except Exception:
                 pass
+
+        if interrupted:
+            self.console.print()
+            self.console.print(
+                f"  [bold #FF4444]⚡ Interrumpido[/] "
+                f"[dim]— tarea cancelada · escribe otra orden cuando quieras[/dim]"
+            )
+            self.console.print()
+            return
 
         if agent_error is not None:
             self.console.print(f"\n  [{ERR}]! Error:[/] {agent_error}")
@@ -2909,6 +3331,28 @@ Describe your project here.
         # Si el buffer está vacío o la respuesta final vino por _display_response,
         # usar el texto retornado por agent.run().
         buf = _stream_buf[0].strip()
+        # FIX 2026-07-14: con proveedores en streaming real (vyrex SSE) el buffer puede
+        # quedarse con un fragmento parcial — usar SIEMPRE el texto mas completo entre
+        # el buffer y la respuesta final del agente.
+        _resp_clean = (response or "").strip()
+
+        # NUNCA volcar un tool-call JSON crudo como respuesta (pasa cuando el
+        # modelo genera un write_file gigante y el JSON se trunca por max_tokens)
+        def _is_raw_tooljson(t: str) -> bool:
+            return t.startswith(('{"tool"', '{"action"', '{"plan_id"', '[{"tool"'))
+        if _is_raw_tooljson(_resp_clean) or _is_raw_tooljson(buf):
+            _stream_buf[0] = ""
+            buf = ""
+            response = (
+                "⚠ La respuesta del modelo era una llamada a herramienta demasiado "
+                "grande y se cortó por el límite de tokens — el archivo pudo quedar "
+                "incompleto. Vuelve a pedirlo: ahora el agente lo escribirá POR PARTES "
+                "(write_file + append_file)."
+            )
+            _resp_clean = response
+        if _final_ok[0] and len(_resp_clean) > len(buf):
+            _stream_buf[0] = _resp_clean
+            buf = _resp_clean
         if buf and _final_ok[0]:
             # Respuesta llegó por streaming — vaciar buffer al terminal
             _flush_stream_buf()
@@ -3029,10 +3473,8 @@ Describe your project here.
             cols = 88
 
         label = Text()
-        label.append("  >> Automyx", style=f"bold {TEAL}")
-        label.append("  " + chr(9472) * min(40, cols - 16), style="dim #1a3050")
-        self.console.print(label)
-        self.console.print()
+        label.append("  ⏺", style=f"bold {TEAL}")
+        self.console.print(label, end=" ")
 
         text  = response.strip()
         lines = text.splitlines()
@@ -3084,47 +3526,16 @@ Describe your project here.
     # Misc
     # ------------------------------------------------------------------
     def _handle_interrupt(self, signum, frame):
-        if not self._is_processing:
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-            self.console.print(f"[{DIM}]Usa /exit para salir.[/{DIM}]")
-            return
-
-        # Detener el Live display primero
-        if self._stop_live_fn:
+        """Ctrl+C estilo Claude Code: cancela la tarea en curso y vuelve al prompt.
+        Nunca sale de Automyx (para salir: /exit). Async-signal-safe: aquí NO se
+        escribe a stdout ni se lee stdin — solo se marca la cancelación y se lanza
+        KeyboardInterrupt, que capturan _process_input (tarea) o el bucle (prompt)."""
+        if self._is_processing and self.agent is not None:
             try:
-                self._stop_live_fn()
+                self.agent.request_cancel()
             except Exception:
                 pass
-
-        O  = "\033[38;2;0;212;170m"
-        B  = "\033[38;2;0;170;255m"
-        R  = "\033[38;2;255;68;68m"
-        D  = "\033[38;2;40;80;115m"
-        BD = "\033[1m"
-        RS = "\033[0m"
-
-        sys.stdout.write(f"\n\n  {BD}{O}⚡ Solicitud interrumpida{RS}\n\n")
-        sys.stdout.write(f"  {D}¿Qué deseas hacer?{RS}\n\n")
-        sys.stdout.write(f"  {BD}{B}[C]{RS}  Cancelar solicitud y continuar\n")
-        sys.stdout.write(f"  {BD}{R}[S]{RS}  Salir de Automyx\n\n")
-        sys.stdout.write(f"  {D}Opción (C/S):{RS} ")
-        sys.stdout.flush()
-
-        try:
-            choice = sys.stdin.readline().strip().lower()
-        except Exception:
-            choice = "c"
-
-        self._interrupt_handled = True
-
-        if choice in ("s", "salir", "exit", "q", "quit"):
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-            self._exit()
-        else:
-            # Cancelar: interrumpir agent.run() con KBI
-            raise KeyboardInterrupt
+        raise KeyboardInterrupt
 
     def _exit(self):
         self.running = False

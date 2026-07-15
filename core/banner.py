@@ -52,122 +52,110 @@ def print_automyx_banner(
     - Subtítulo con versión + modelo
     - Si show_details: árbol de capacidades + tabla de inventario
     """
+    import os as _os
+    import time as _time
     try:
-        # 1) Banner principal con logo
-        subtitle_parts = [f"v{version}"]
-        if provider:
-            subtitle_parts.append(provider)
-        subtitle_parts.append("Gateway Omnipotente")
-        _banner(
-            "",
-            subtitle="  ·  ".join(subtitle_parts),
-            ascii_logo=True,
-            width=110,
-        )
-        print() if not RICH_AVAILABLE else None
+        from rich.text import Text
+        from rich.panel import Panel
+        from rich import box as _rbox
 
-        # 2) Información del modelo activo
-        if model_name:
-            try:
-                from rich.text import Text
-                t = Text()
-                t.append("  Modelo activo: ", style=BRAND_GRAY)
-                t.append(model_name, style=f"bold {BRAND_CYAN}")
-                if provider:
-                    t.append(f"  ({provider})", style=BRAND_GRAY)
-                if RICH_AVAILABLE and console:
-                    console.print(t)
-                else:
-                    print(f"  Modelo activo: {model_name}")
-            except Exception:
-                print(f"  Modelo activo: {model_name}")
-            print() if not RICH_AVAILABLE else None
+        _G  = ["#00FFB2", "#00F2C8", "#00E0DC", "#00CCEE", "#00B8FF", "#3D9EFF"]
+        _DM = "#4A6A8A"
+        _W  = "#F0F6FF"
+        _T  = "#00D4AA"
+
+        if not (RICH_AVAILABLE and console):
+            print(ASCII_LOGO_MINI)
+            print(f"AUTOMYX v{version} · {model_name}")
+            return
+
+        # ── 1) Boot probes ultrarrápidos (identidad hacker) ──
+        import platform as _plat
+        _probes = [
+            ("sys",    f"{_plat.system().lower()} {_plat.release()}"),
+            ("python", _plat.python_version()),
+            ("engine", f"automyx core v{version}"),
+        ]
+        console.print()
+        for _n, _v in _probes:
+            _bl = Text()
+            _bl.append("  ▸ ", style=f"bold {_T}")
+            _bl.append(f"{_n:<8}", style=f"dim {_DM}")
+            _bl.append(_v, style=_W)
+            _bl.append("  ✓", style="bold #5EE6A8")
+            console.print(_bl)
+            _time.sleep(0.04)
+        console.print()
+
+        # ── 2) Logo AUTOMYX con degradado verde→cian ──
+        _rows = [
+            "  ▄████████╗ ██╗   ██╗████████╗  ██████╗ ███╗   ███╗██╗   ██╗██╗  ██╗",
+            "  ██╔══════╝ ██║   ██║╚══██╔══╝ ██╔═══██╗████╗ ████║╚██╗ ██╔╝╚██╗██╔╝",
+            "  ███████╗   ██║   ██║   ██║    ██║   ██║██╔████╔██║ ╚████╔╝  ╚███╔╝ ",
+            "  ██╔════╝   ██║   ██║   ██║    ██║   ██║██║╚██╔╝██║  ╚██╔╝   ██╔██╗ ",
+            "  ███████╗   ╚██████╔╝   ██║    ╚██████╔╝██║ ╚═╝ ██║   ██║   ██╔╝ ██╗",
+            "  ╚══════╝    ╚═════╝    ╚═╝     ╚═════╝ ╚═╝     ╚═╝   ╚═╝   ╚═╝  ╚═╝",
+        ]
+        _logo = Text()
+        for _i, _r in enumerate(_rows):
+            _logo.append(_r + "\n", style=f"bold {_G[_i]}")
+        console.print(_logo)
+
+        # ── 3) Welcome card estilo Claude Code ──
+        _cwd = _os.getcwd()
+        if len(_cwd) > 46:
+            _cwd = "…" + _cwd[-45:]
+        _card = Text()
+        _card.append("✻ ", style=f"bold {_T}")
+        _card.append(f"Bienvenido a AUTOMYX", style=f"bold {_W}")
+        _card.append(f"  v{version}\n\n", style=f"dim {_DM}")
+        _card.append("  modelo      ", style=f"dim {_DM}")
+        _card.append(f"{model_name or 'sin configurar'}", style=f"bold {_T}")
+        if provider:
+            _card.append(f"  ({provider})", style=f"dim {_DM}")
+        _card.append("\n")
+        _card.append("  directorio  ", style=f"dim {_DM}")
+        _card.append(f"{_cwd}\n", style=_W)
+        _card.append("  arsenal     ", style=f"dim {_DM}")
+        _card.append(f"{tool_count} tools", style=_W)
+        _card.append(" · ", style=f"dim {_DM}")
+        _card.append(f"{skill_count} skills", style=_W)
+        _card.append(" · ", style=f"dim {_DM}")
+        _card.append(f"{agent_count + 6} agentes", style=_W)
+        if channels:
+            _card.append("\n")
+            _card.append("  canales     ", style=f"dim {_DM}")
+            _card.append(" · ".join(channels), style=_W)
+        console.print(Panel(_card, border_style=f"dim {_T}", box=_rbox.ROUNDED,
+                            padding=(1, 3), expand=False))
+
+        # ── 4) Tips de arranque (una sola línea, como Claude Code) ──
+        _tips = Text()
+        _tips.append("  /help", style=f"bold {_T}")
+        _tips.append(" comandos", style=f"dim {_DM}")
+        _tips.append("   /model", style=f"bold {_T}")
+        _tips.append(" cambiar modelo", style=f"dim {_DM}")
+        _tips.append("   /tasks", style=f"bold {_T}")
+        _tips.append(" tareas", style=f"dim {_DM}")
+        _tips.append("   !", style=f"bold {_T}")
+        _tips.append(" shell directo", style=f"dim {_DM}")
+        console.print(_tips)
+        console.print()
 
         if not show_details:
             return
 
-        # 3) Árbol de capacidades
-        _tree(
-            "Capacidades de AUTOMYX",
-            {
-                "Chat & Razonamiento": [
-                    "Multi-modelo (OpenAI, Anthropic, NVIDIA, Ollama local)",
-                    "Streaming de respuestas",
-                    "Memoria persistente (RAG vector + SQLite)",
-                    "Sistema de auto-mejora por errores",
-                ],
-                "Productividad": [
-                    "280+ herramientas registradas",
-                    "Ejecución de comandos del sistema",
-                    "Lectura/escritura de archivos",
-                    "Búsqueda web profunda",
-                ],
-                "Multimedia": [
-                    "Edición de video FFmpeg (estilos MrBeast, Cinematic, etc)",
-                    "Renderizado 3D con Blender",
-                    "Audio mastering profesional",
-                    "OBS livestreaming",
-                ],
-                "Desarrollo": [
-                    "Generación de código desde especificación",
-                    "Code review automático",
-                    "Test runner",
-                    "OpenCode CLI bridge (sub-agente)",
-                ],
-                "Conocimiento": [
-                    "Búsqueda arXiv/PubMed/Semantic Scholar",
-                    "OSINT y auditoría de seguridad",
-                    "Contabilidad multi-país (AR/MX/PE/CO/ES)",
-                    "Swarm orchestrator multi-instancia",
-                ],
-                "Canales": [
-                    "Web dashboard (SPA)",
-                    "WebSocket gateway",
-                    "Telegram bot",
-                    "WhatsApp (en desarrollo)",
-                ],
-            },
-        )
-        print() if not RICH_AVAILABLE else None
-
-        # 4) Tabla de inventario
-        _table(
-            "Inventario del sistema",
-            ["Categoría", "Cantidad", "Estado"],
-            [
-                ["Agentes registrados", str(agent_count), "OK"],
-                ["Skills disponibles", str(skill_count), "OK"],
-                ["Tools registradas", str(tool_count), "OK"],
-                ["Canales activos", str(len(channels) if channels else 1), "OK"],
-                ["Versión", version, "STABLE"],
-            ],
-            styles=[BRAND_CYAN, BRAND_YELLOW, BRAND_GREEN],
-        )
-        print() if not RICH_AVAILABLE else None
-
-        # 5) PROMO — motor propio Vyrex GPT / Nexora Technology
-        try:
-            _msg = (
-                "[bold yellow]AUTOMYX YA LLEGÓ PARA ACABAR CON LAS IAS POTENTES[/bold yellow]\n\n"
-                "¿Qué esperas? Recarga tu API en [bold cyan]vyrexstudio.com[/bold cyan] y desata a Automyx:\n"
-                "edita videos, controla tu PC para trabajar, programa, investiga — todo con el\n"
-                "motor [bold]Vyrex GPT[/bold] (modelo propio de Nexora Technology).\n\n"
-                "Precios ridículos vs Claude/GPT · sin límites absurdos · potencia real."
-            )
-            if RICH_AVAILABLE and console:
-                from rich.panel import Panel
-                console.print(Panel(_msg, title="⚡ Vyrex GPT · Nexora Technology LLC",
-                                    border_style=BRAND_YELLOW, expand=False))
-                print()
-            else:
-                print("\n=== AUTOMYX YA LLEGÓ PARA ACABAR CON LAS IAS POTENTES ===")
-                print("¿Qué esperas? Recarga tu API en vyrexstudio.com y usa Automyx")
-                print("con el motor Vyrex GPT: edita videos, controla tu PC, programa.\n")
-        except Exception:
-            pass
+        # ── 5) Promo Vyrex GPT (compacta, identidad Nexora) ──
+        _pm = Text()
+        _pm.append("⚡ ", style="bold #FFD700")
+        _pm.append("Vyrex GPT", style=f"bold {_T}")
+        _pm.append(" — motor propio de Nexora · recarga en ", style=f"dim {_DM}")
+        _pm.append("vyrexstudio.com", style=f"bold {_W}")
+        _pm.append(" · precios ridículos vs Claude/GPT", style=f"dim {_DM}")
+        console.print(_pm)
+        console.print()
 
     except Exception as e:
-        # Fallback extremo: print plano
         print(ASCII_LOGO)
         print(f"AUTOMYX v{version} - {model_name}")
         print(f"Tools: {tool_count} | Skills: {skill_count}")

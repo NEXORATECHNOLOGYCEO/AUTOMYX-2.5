@@ -109,8 +109,6 @@ class AutonomyCore:
         
         This uses the LLM to understand the task complexity.
         """
-        agent = self._ensure_master_agent()
-        
         analysis_prompt = f"""Analiza la siguiente tarea y determina su complejidad.
 
 Tarea: {task}
@@ -138,8 +136,19 @@ Reglas:
 JSON:"""
         
         try:
-            response = agent.run(analysis_prompt)
-            
+            # Llamada LLM directa y barata: sin Soul.md, sin tools, sin historial
+            # (agent.run aqui quemaba ~40k tokens de system prompt solo para el JSON)
+            # timeout corto SIN reintentos: si el modelo esta ocupado (np=1 en
+            # ollama multimodal) caemos a heuristica en 45s, no en 92s
+            from core.agent import ModelProvider
+            client = ModelProvider.get_client(self.model).with_options(
+                timeout=45.0, max_retries=0)
+            r = client.chat.completions.create(
+                model=ModelProvider.get_display_name(self.model),
+                messages=[{"role": "user", "content": analysis_prompt}],
+                max_tokens=500, temperature=0.2)
+            response = r.choices[0].message.content or ""
+
             # Extract JSON from response
             import re
             json_match = re.search(r'\{.*?\}', response, re.DOTALL)
@@ -286,43 +295,50 @@ JSON:"""
         except Exception as e:
             return {"error": str(e)}
     
-    def execute_autonomously(self, task: str) -> Dict[str, Any]:
-        """
-        Execute a task completely autonomously.
-        
-        This is the main entry point. AUTONOMY will:
-        1. Analyze the task
-        2. Decide the best execution strategy
-        3. Create agents/skills if needed
-        4. Navigate the filesystem if needed
-        5. Execute the task
-        6. Learn from the result
-        """
-        start_time = time.time()
-        
+    MAX_AGENTS = 100
+
+    @staticmethod
+    def needs_orchestrator(analysis: "TaskAnalysis") -> bool:
+        """True solo si la tarea de verdad amerita agentes paralelos (2+)."""
+        return bool(analysis and analysis.needs_agents
+                    and analysis.num_agents_needed >= 2
+                    and MultiAgentOrchestrator is not None)
+
+    def analyze_only(self, task: str) -> Optional["TaskAnalysis"]:
+        """Fase de análisis con su tabla — para correrla ANTES de abrir un Live."""
         if self.console:
-            self.console.print(f"\n[bold cyan]AUTONOMY: Analyzing task...[/bold cyan]")
-            self.console.print(f"[dim]Task: {task[:80]}{'...' if len(task) > 80 else ''}[/dim]\n")
-        
-        # Step 1: Analyze the task
+            self.console.print(f"\n[bold cyan]AUTONOMY: Analizando tarea...[/bold cyan]")
+            self.console.print(f"[dim]Tarea: {task[:80]}{'...' if len(task) > 80 else ''}[/dim]\n")
         analysis = self.analyze_task(task)
-        
+        analysis.num_agents_needed = max(1, min(int(analysis.num_agents_needed or 1),
+                                                self.MAX_AGENTS))
         if self.console:
             self._display_analysis(analysis)
-        
-        # Step 2: Auto-create skills if needed
-        if analysis.needs_skills and analysis.skills_needed:
-            for skill_name in analysis.skills_needed:
-                self.auto_create_skill(
-                    skill_name=skill_name,
-                    description=f"Auto-created skill for {skill_name}",
-                    instrucciones=f"# {skill_name}\n\nThis skill handles {skill_name} tasks."
-                )
-        
-        # Step 3: Execute based on complexity
-        if self.console:
-            self.console.print(f"\n[bold cyan]AUTONOMY: Executing (complexity: {analysis.complexity.value})...[/bold cyan]\n")
-        
+            modo = ("orquestador paralelo" if self.needs_orchestrator(analysis)
+                    else "agente maestro (todas las tools)")
+            self.console.print(f"\n[bold cyan]AUTONOMY: Ejecutando → {modo}[/bold cyan]")
+        return analysis
+
+    def execute_autonomously(self, task: str, agent: Any = None,
+                             progress_callback: Any = None,
+                             analysis: Optional["TaskAnalysis"] = None) -> Dict[str, Any]:
+        """
+        Execute a task completely autonomously.
+
+        agent: agente ya vivo (el del REPL) para ejecutar con sus tools,
+               historial y callbacks; si es None se usa el master agent propio.
+        progress_callback: se pasa a agent.run para la UI en vivo del REPL.
+        analysis: si ya se corrió analyze_only, se reutiliza (no re-analiza).
+
+        OJO Live displays: el orquestador multi-agente abre su PROPIO rich.Live —
+        el llamador debe cerrar cualquier Live activo antes si
+        needs_orchestrator(analysis) es True (fix "Only one live display").
+        """
+        start_time = time.time()
+
+        if analysis is None:
+            analysis = self.analyze_only(task)
+
         result = {
             "task": task,
             "analysis": {
@@ -336,22 +352,20 @@ JSON:"""
             "created_agents": [],
             "created_skills": []
         }
-        
+
         try:
-            if analysis.complexity in [TaskComplexity.MASSIVE, TaskComplexity.COMPLEX]:
-                # Use multi-agent execution
-                if MultiAgentOrchestrator:
-                    orchestrator = MultiAgentOrchestrator(model=self.model, 
-                                                        max_workers=analysis.num_agents_needed)
-                    subtasks = orchestrator.decompose_task(task, num_agents=analysis.num_agents_needed)
-                    plan = orchestrator.create_plan(task, subtasks)
-                    plan = orchestrator.execute_parallel(plan)
-                    execution_result = orchestrator.aggregate_results(plan)
-                    result["execution"] = execution_result
+            if self.needs_orchestrator(analysis):
+                orchestrator = MultiAgentOrchestrator(model=self.model,
+                                                    max_workers=analysis.num_agents_needed)
+                # run_project: carpeta única + plan de archivos con dueño por
+                # agente + integrador final (antes cada agente inventaba su
+                # propia carpeta y nadie ensamblaba el entregable)
+                execution_result = orchestrator.run_project(
+                    task, num_agents=analysis.num_agents_needed)
+                result["execution"] = execution_result
             else:
-                # Single agent execution
-                agent = self._ensure_master_agent()
-                execution_result = agent.run(task)
+                run_agent = agent if agent is not None else self._ensure_master_agent()
+                execution_result = run_agent.run(task, progress_callback=progress_callback)
                 result["execution"] = execution_result
         except Exception as e:
             result["execution"] = f"Error: {e}"

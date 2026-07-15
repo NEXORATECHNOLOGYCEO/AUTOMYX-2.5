@@ -686,6 +686,7 @@ class AutomyxAgent:
         self.model_name = model_name
         self.provider = provider or ModelProvider.get_provider(model_name)
         self.hw = hw_config
+        self._cancel_requested = False
         
         logger.info(f"Iniciando AutomyxAgent en {self.hw.os_name} ({self.hw.arch})")
         logger.info(f"Hardware detectado: GPU={self.hw.gpu_vendor}, Backend={self.hw.acceleration_backend}")
@@ -782,12 +783,14 @@ class AutomyxAgent:
                 self.history.append(msg)
 
     def inject_memory_context(self, facts_context: str):
-        """Inyecta el contexto de memoria en el system prompt existente."""
+        """Inyecta un bloque de contexto en el system prompt existente (dedup por
+        la primera línea del bloque, para poder inyectar facts Y resumen de sesión)."""
         if not facts_context or not self.history:
             return
         if self.history[0]["role"] == "system":
             base = self.history[0]["content"]
-            if "[MEMORIA PERSISTENTE" not in base:
+            marker = facts_context.strip().splitlines()[0][:40]
+            if marker and marker not in base:
                 self.history[0]["content"] = base + f"\n\n{facts_context}"
 
     def register_tool(self, name: str, func: Callable, requires: Optional[list] = None):
@@ -1265,9 +1268,13 @@ class AutomyxAgent:
         rationale = step.get("rationale", "")
 
         step_msg = f"[Paso {step_num}/{total}] {rationale or tool_name}"
+        _cmd_full = ""
+        if isinstance(args, dict):
+            _cmd_full = str(args.get("command") or args.get("cmd")
+                            or args.get("code") or args.get("script") or "")[:400]
         _set_phase("tool_executing", step_msg, tool_name=tool_name,
                    rationale=rationale, tool_args_summary=str(args)[:80],
-                   step=step_num, total=total)
+                   step=step_num, total=total, tool_cmd=_cmd_full)
 
         resolved_args = self._resolve_step_args(args, plan)
         t0 = time.time()
@@ -1398,6 +1405,16 @@ class AutomyxAgent:
                 resolved[k] = v
         return resolved
 
+    def request_cancel(self):
+        """Cancelación cooperativa (Ctrl+C): el bucle de run() la detecta en el
+        siguiente checkpoint aunque el KeyboardInterrupt caiga en un except genérico."""
+        self._cancel_requested = True
+
+    def _check_cancel(self):
+        if getattr(self, "_cancel_requested", False):
+            self._cancel_requested = False
+            raise KeyboardInterrupt
+
     def run(self, user_input: str, custom_system_prompt: str = None, agent_skills: dict = None,
             agent_id: str = "main", progress_callback=None, images: list = None) -> str:
         """Bucle principal del agente con fases claras y comunicación rica.
@@ -1405,6 +1422,7 @@ class AutomyxAgent:
         `images` (opcional): lista de dicts {"data": base64, "mime": "image/png"}.
         Se guardan a disco y se referencian en el contexto para modelos con visión.
         """
+        self._cancel_requested = False
         # --- Save incoming images to disk for downstream tools / vision models ---
         if images:
             try:
@@ -1564,6 +1582,30 @@ class AutomyxAgent:
 
             self.history[0]["content"] = base + hw_context
 
+        # Al empezar una tarea NUEVA: encoger los mensajes gigantes de tareas
+        # anteriores (resultados de read_file/tools) — ya no se necesitan enteros
+        # y desviaban el foco del modelo además de quemar tokens.
+        _had_prev_turns = False
+        for _m in self.history[1:]:
+            if _m.get("role") == "user":
+                _had_prev_turns = True
+            _c = _m.get("content")
+            if isinstance(_c, str) and len(_c) > 1200:
+                _m["content"] = _c[:1200] + "…[recortado — tarea anterior]"
+
+        # Ancla de foco: la orden nueva manda. Sin esto el modelo continuaba
+        # tareas viejas del historial en vez de atender lo que se le acaba de pedir.
+        # (se quitan las anclas de turnos previos para que solo exista UNA)
+        self.history = [m for m in self.history
+                        if not (m.get("role") == "system"
+                                and str(m.get("content", "")).startswith("[NUEVA ORDEN DEL USUARIO]"))]
+        if _had_prev_turns:
+            self.history.append({"role": "system", "content": (
+                "[NUEVA ORDEN DEL USUARIO] Todo lo anterior del historial ya terminó "
+                "o es solo contexto. Ejecuta EXACTA y LITERALMENTE la siguiente orden. "
+                "NO continúes, repitas ni retomes tareas anteriores salvo que esta "
+                "orden lo pida explícitamente."
+            )})
         self.history.append({"role": "user", "content": user_input})
 
         # Inyectar contexto de auto-aprendizaje (conversaciones similares + lecciones)
@@ -1597,6 +1639,7 @@ class AutomyxAgent:
         consecutive_errors: int = 0     # anti-confusion
         recent_exact: set = set()       # detección de duplicado exacto
         tools_used_in_task: list = []   # para auto-skill-save
+        _hit_iteration_limit = False    # tarea incompleta → sin auto-skill
 
         # ---- BUCLE PRINCIPAL ----
         # Safety net: ajustar segun el modelo. Modelos rapidos (M3) toleran
@@ -1613,6 +1656,7 @@ class AutomyxAgent:
         except Exception:
             max_iterations = 10
         for iteration in range(max_iterations):
+            self._check_cancel()
             get_agent_status()["step"] = iteration + 1
 
             # Recordatorio de tarea cada 3 iteraciones → previene confusión del LLM
@@ -1698,7 +1742,11 @@ class AutomyxAgent:
                         term.llm_response_stream("")  # marca inicio de stream
                     _last_stream_update = 0.0
                     _STREAM_UPDATE_INTERVAL = 0.12  # max ~8 display updates/seg
+                    _stream_usage = None  # usage viaja en el chunk FINAL (API Vyrex SSE)
                     for chunk in completion:
+                        self._check_cancel()
+                        if getattr(chunk, "usage", None):
+                            _stream_usage = chunk.usage
                         if not getattr(chunk, "choices", None) or len(chunk.choices) == 0:
                             continue
                         delta = chunk.choices[0].delta
@@ -1725,6 +1773,8 @@ class AutomyxAgent:
                 if _TRACKER_AVAILABLE and get_tracker is not None:
                     try:
                         _usage = getattr(completion, "usage", None)
+                        if _usage is None and _call_kwargs["stream"]:
+                            _usage = locals().get("_stream_usage")
                         if _usage is not None:
                             get_tracker().track(
                                 actual_model,
@@ -1932,6 +1982,7 @@ class AutomyxAgent:
             loop_detected = False
 
             for idx, tool_call in enumerate(tool_calls, 1):
+                self._check_cancel()
                 if "action" not in tool_call:
                     msg = f"[Tool {idx}] No se encontró 'action' en tool_call. Ignorando."
                     if TERMINAL_AVAILABLE and term:
@@ -2008,10 +2059,16 @@ class AutomyxAgent:
                 get_agent_status()["tool_name"] = action
                 get_agent_status()["tool_args_summary"] = args_summary
                 get_agent_status()["reasoning"] = rationale
-                
+
+                # comando/código completo para el render estilo Claude Code ($ cmd…)
+                _tool_cmd = ""
+                if isinstance(args, dict):
+                    _tool_cmd = str(args.get("command") or args.get("cmd")
+                                    or args.get("code") or args.get("script") or "")[:400]
+
                 _set_phase("tool_executing", narrative,
                           tool_name=action, tool_args_summary=args_summary, rationale=rationale,
-                          step=idx, total=len(tool_calls))
+                          step=idx, total=len(tool_calls), tool_cmd=_tool_cmd)
                 
                 if TERMINAL_AVAILABLE and term:
                     # Note: term.tool_executing ya imprime la acción, evitamos imprimir cosas dobles
@@ -2172,7 +2229,8 @@ class AutomyxAgent:
                         # output_path vacío devolviendo "❌ Error..." se mostraba con ✓ y el
                         # modelo inventaba detalles de un video que nunca se creó).
                         _stripped = tool_result.strip()
-                        ok = not (_stripped.startswith("❌") or _stripped.startswith("⚠️") or _stripped.lower().startswith("error"))
+                        ok = not (_stripped.startswith("❌") or _stripped.startswith("⚠️")
+                                  or _stripped.startswith("⏱") or _stripped.lower().startswith("error"))
                         if not ok and ErrorLearningSystem is not None:
                             try:
                                 ErrorLearningSystem.log_error(action, args, _stripped[:300], context=user_input[:200])
@@ -2240,58 +2298,112 @@ class AutomyxAgent:
                 break
         else:
             # Safety net: limite de iteraciones
+            _hit_iteration_limit = True
             if TERMINAL_AVAILABLE and term:
                 term.warn(f"Limite de {max_iterations} iteraciones alcanzado.")
             # Si la ultima respuesta del modelo es JSON de herramientas, no la retornamos
-            # como respuesta final — dejamos que el auto-resumen tome el control.
+            # como respuesta final — dejamos que la síntesis final tome el control.
             _last_is_json = bool(ai_message and self._parse_tool_calls(ai_message))
             final_answer = ai_message if (ai_message and not _last_is_json) else ""
 
-        # ---- Auto-resumen cuando LLM no dio respuesta final ----
+        # ---- Síntesis final REAL cuando el LLM no dio respuesta ----
+        # Antes se devolvía un "Completado. N acciones: ..." enlatado que sonaba a
+        # éxito aunque la tarea hubiera fracasado. Ahora: una llamada extra SIN
+        # herramientas que resume honestamente qué se logró y qué falta.
+        if not final_answer.strip() and tools_used_in_task:
+            try:
+                _set_phase("thinking", "Redactando resumen final...")
+                if progress_callback:
+                    try: progress_callback("thinking", "Redactando resumen final...")
+                    except Exception: pass
+                self.history.append({"role": "user", "content": (
+                    "[SÍNTESIS FINAL OBLIGATORIA] Se alcanzó el límite de pasos. "
+                    "PROHIBIDO usar herramientas o JSON. Responde al usuario en español, "
+                    "texto plano y breve: (1) qué lograste realmente según los resultados "
+                    "de arriba, (2) qué falló o no se encontró, (3) qué necesitas de él "
+                    "para continuar (ruta exacta, nombre, una decisión). Sé honesto: si "
+                    "la tarea NO se completó, dilo claramente — no describas éxitos falsos."
+                )})
+                _synth_model = ModelProvider.get_display_name(self.model_name)
+                _sc = self.client.chat.completions.create(
+                    model=_synth_model,
+                    messages=self.history,
+                    temperature=0.4,
+                    max_tokens=800,
+                    stream=False,
+                    timeout=90,
+                )
+                if hasattr(_sc, "choices") and _sc.choices:
+                    _txt = (_sc.choices[0].message.content or "").strip()
+                    if _txt and not self._parse_tool_calls(_txt):
+                        final_answer = _txt
+                if _TRACKER_AVAILABLE and get_tracker is not None:
+                    try:
+                        _u = getattr(_sc, "usage", None)
+                        if _u is not None:
+                            get_tracker().track(_synth_model,
+                                                getattr(_u, "prompt_tokens", 0),
+                                                getattr(_u, "completion_tokens", 0))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            if final_answer.strip():
+                _set_phase("responding", final_answer)
+                if progress_callback:
+                    try: progress_callback("responding", final_answer)
+                    except Exception: pass
+
         if not final_answer.strip() and tools_used_in_task:
             _n = len(tools_used_in_task)
             _tool_names = ", ".join(t["tool"] for t in tools_used_in_task[:6])
             final_answer = (
-                f"Completado. {_n} accion{'es' if _n > 1 else ''}: {_tool_names}."
-                + (f" (y {_n - 6} mas)" if _n > 6 else "")
+                f"⚠ No pude completar la tarea en el límite de pasos. Ejecuté {_n} "
+                f"herramienta{'s' if _n > 1 else ''} ({_tool_names}"
+                + (f" y {_n - 6} más" if _n > 6 else "") + "). "
+                "Revisa los resultados de arriba y dame un dato más concreto "
+                "(ruta o nombre exacto) para continuar."
             )
             _set_phase("responding", final_answer)
             if progress_callback:
-                try:
-                    progress_callback("responding", final_answer)
-                except Exception:
-                    pass
+                try: progress_callback("responding", final_answer)
+                except Exception: pass
 
         # ---- FASE 6: CIERRE + AUTO-LEARNING ----
 
-        # AUTO-SKILL-SAVE: tarea compleja (3+ tools) y exitosa → guardar habilidad
-        if len(tools_used_in_task) >= 3 and final_answer and len(final_answer) > 40:
+        # AUTO-SKILL-SAVE: tarea compleja (3+ tools) y exitosa → guardar habilidad.
+        # SOLO si detect_needed_skill identifica una categoría real — el fallback de
+        # nombrar la skill con el texto crudo del prompt generaba basura
+        # ("puedes_entrar_a_la_carpeta_d") que no sirve para nada.
+        if (len(tools_used_in_task) >= 3 and final_answer and len(final_answer) > 40
+                and not _hit_iteration_limit):
             try:
                 from core.auto_skill import AutoSkillCreator
-                import re as _re_sk
                 _asc = AutoSkillCreator(model=self.model_name)
-                _skill_cat = _asc.detect_needed_skill(user_input)
-                _slug = _skill_cat or _re_sk.sub(r'[^a-z0-9]+', '_', user_input[:28].lower()).strip('_')
-                _steps_md = "\n".join(
-                    f"{i+1}. `{t['tool']}`"
-                    + (f" — {list(t['args'].values())[0]}" if t.get('args') else "")
-                    for i, t in enumerate(tools_used_in_task[:20])
-                )
-                _ok_skill = _asc.create_custom_skill(
-                    name=_slug,
-                    description=user_input[:100],
-                    instructions=(
-                        f"# Skill auto-generada\n\n"
-                        f"## Tarea original\n{user_input[:300]}\n\n"
-                        f"## Pasos ejecutados ({len(tools_used_in_task)} herramientas)\n{_steps_md}\n\n"
-                        f"## Resultado\n{final_answer[:500]}\n"
-                    ),
-                )
-                if _ok_skill and progress_callback:
-                    try:
-                        progress_callback("skill_saved", f"skill guardada: {_slug}", tool_name=_slug)
-                    except Exception:
-                        pass
+                _slug = _asc.detect_needed_skill(user_input)
+                _ok_skill = False
+                if _slug:
+                    _steps_md = "\n".join(
+                        f"{i+1}. `{t['tool']}`"
+                        + (f" — {list(t['args'].values())[0]}" if t.get('args') else "")
+                        for i, t in enumerate(tools_used_in_task[:20])
+                    )
+                    _ok_skill = _asc.create_custom_skill(
+                        name=_slug,
+                        description=user_input[:100],
+                        instructions=(
+                            f"# Skill auto-generada\n\n"
+                            f"## Tarea original\n{user_input[:300]}\n\n"
+                            f"## Pasos ejecutados ({len(tools_used_in_task)} herramientas)\n{_steps_md}\n\n"
+                            f"## Resultado\n{final_answer[:500]}\n"
+                        ),
+                    )
+                    if _ok_skill and progress_callback:
+                        try:
+                            progress_callback("skill_saved", f"skill guardada: {_slug}", tool_name=_slug)
+                        except Exception:
+                            pass
                 # Guardar resumen de tarea en memoria persistente
                 try:
                     from core.memory import MemoryManager

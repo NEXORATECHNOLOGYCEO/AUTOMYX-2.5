@@ -103,7 +103,7 @@ class SessionManager:
         if session_id:
             self.session_id = session_id
         self._load()
-        self.console.print(f"[green]✓[/] Session loaded: [cyan]{self.session_id}[/]")
+        self.console.print(f"  [dim #3a5a80]⎿ [/][dim #6888A8]sesión {self.session_id}[/]")
     
     def new(self):
         """Create a new session."""

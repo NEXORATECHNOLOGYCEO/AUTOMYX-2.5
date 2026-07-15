@@ -1,41 +1,24 @@
 ---
 name: ai_ml
-description: siii eso era lo que queria, y puedes dentor de ella ponerle un login y un register?
+description: busca en las aplicaciones hay una de wiliam tts, que funciona ayudame a volverla un ejecutable un .e
 ---
 
 # Skill auto-generada
 
 ## Tarea original
-siii eso era lo que queria, y puedes dentor de ella ponerle un login y un register?
+busca en las aplicaciones hay una de wiliam tts, que funciona ayudame a volverla un ejecutable un .exe aplicacion de computadora facil de usar
 
-## Pasos ejecutados (7 herramientas)
-1. `read_file` — C:\Users\COMPUMAX\Downloads\restaurante_delicioso\app.py
-2. `write_file` — from flask import Flask, render_template, request, redirect,
-3. `write_file` — <!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="U
-4. `write_file` — <!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="U
-5. `write_file` — from flask import Flask, render_template, request, redirect,
-6. `write_file` — <!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="U
-7. `write_file` — /* Variables y Reset */
-:root {
-    --bg-dark: #0f172a;
-    
+## Pasos ejecutados (10 herramientas)
+1. `execute_cmd` — dir "C:\Program Files\*william*" /s /b 2>nul || dir "C:\Prog
+2. `execute_cmd` — where /r "C:\Program Files" willy* 2>nul & where /r "C:\Prog
+3. `execute_cmd` — dir "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
+4. `list_directory` — C:\Users\COMPUMAX\Documents\AUTOMIX 2.5win, mac, rasberry pi
+5. `execute_cmd` — dir "C:\Users\COMPUMAX\Downloads\*william*tts*" /s 2>nul & d
+6. `execute_cmd` — Get-ChildItem -Path "C:\Users\COMPUMAX\Downloads" -Recurse -
+7. `execute_cmd` — dir "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
+8. `list_directory` — C:\Users\COMPUMAX\Desktop
+9. `list_directory` — C:\Users\COMPUMAX\Desktop\Deep Fake Text to Speech and More
+10. `execute_cmd` — dir "C:\Users\COMPUMAX\Documents" /s /b | findstr /i "willia
 
 ## Resultado
-✅ **Sistema de Login y Registro Completado**
-
-He integrado un sistema completo de autenticación en tu sitio web:
-
-1.  **Backend (`app.py`):** Servidor Flask que maneja el registro (guarda usuarios en `users.json`) y el login (verifica credenciales).
-2.  **Vistas (`templates/`):**
-    *   `index.html`: Ahora detecta si hay un usuario logueado. Muestra "Login" y "Registro" si no hay sesión, o "Logout" si ya entraste.
-    *   `login.html`: Formulario de acceso con estilo premium oscuro.
-    *   `re
+Completado. 10 acciones: execute_cmd, execute_cmd, execute_cmd, list_directory, execute_cmd, execute_cmd. (y 4 mas)

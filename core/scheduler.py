@@ -218,3 +218,124 @@ def get_scheduler(agent_runner: Optional[Callable] = None) -> AgentScheduler:
     if _scheduler_instance is None:
         _scheduler_instance = AgentScheduler(agent_runner=agent_runner)
     return _scheduler_instance
+
+
+# ── Auto-encendido: Programador de tareas de Windows ─────────────────────────
+# Crea una tarea de Windows que lanza `python automyx.py cron <id>` a la hora
+# programada — Automyx se ENCIENDE SOLO aunque el REPL esté cerrado.
+
+REPORTS_DIR = Path.home() / ".automyx" / "schedule_reports"
+
+
+def _task_name(schedule_id: str) -> str:
+    return f"Automyx_{schedule_id}"
+
+
+def _automyx_entry() -> tuple:
+    import sys
+    root = Path(__file__).resolve().parent.parent
+    return sys.executable, str(root / "automyx.py")
+
+
+def create_windows_task(schedule_id: str, cron_expr: str) -> str:
+    """Traduce crons simples a schtasks. Soporta: 'M H * * *' (diario HH:MM),
+    '*/N * * * *' (cada N min), 'M H * * D' (semanal). Devuelve descripción."""
+    import subprocess
+    py, entry = _automyx_entry()
+    tr = f'"{py}" "{entry}" cron {schedule_id}'
+    parts = cron_expr.strip().split()
+    if len(parts) != 5:
+        raise ValueError("cron inválido")
+    minute, hour, day, month, weekday = parts
+
+    base = ["schtasks", "/Create", "/TN", _task_name(schedule_id), "/TR", tr, "/F"]
+    if minute.startswith("*/") and hour == "*":
+        n = int(minute[2:])
+        cmd = base + ["/SC", "MINUTE", "/MO", str(n)]
+        desc = f"cada {n} min"
+    elif minute.isdigit() and hour.isdigit() and weekday != "*" and weekday.isdigit():
+        dias = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
+        st = f"{int(hour):02d}:{int(minute):02d}"
+        cmd = base + ["/SC", "WEEKLY", "/D", dias[int(weekday) % 7], "/ST", st]
+        desc = f"semanal {dias[int(weekday) % 7]} {st}"
+    elif minute.isdigit() and hour.isdigit():
+        st = f"{int(hour):02d}:{int(minute):02d}"
+        cmd = base + ["/SC", "DAILY", "/ST", st]
+        desc = f"diario a las {st}"
+    else:
+        raise ValueError("cron demasiado complejo para el Programador de Windows "
+                         "(usa HH:MM, cada Nm, o día semanal)")
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout or "schtasks falló").strip()[:200])
+    return desc
+
+
+def delete_windows_task(schedule_id: str) -> bool:
+    import subprocess
+    r = subprocess.run(["schtasks", "/Delete", "/TN", _task_name(schedule_id), "/F"],
+                       capture_output=True, text=True, timeout=30)
+    return r.returncode == 0
+
+
+def run_headless(schedule_id: str) -> int:
+    """Runner del Programador de Windows: carga el agente completo, ejecuta la
+    tarea programada de forma autónoma y guarda el reporte en markdown."""
+    schedules = _load_schedules()
+    sched = next((s for s in schedules if s["id"] == schedule_id
+                  or s["id"].startswith(schedule_id)), None)
+    if not sched:
+        print(f"tarea programada no encontrada: {schedule_id}")
+        return 1
+    if not sched.get("enabled", True):
+        print(f"tarea {schedule_id} deshabilitada — no se ejecuta")
+        return 0
+
+    started = datetime.now()
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    report_path = REPORTS_DIR / f"{sched['id']}_{started.strftime('%Y%m%d_%H%M')}.md"
+
+    task = (
+        f"{sched['task']}\n\n"
+        f"[TAREA PROGRAMADA — MODO AUTÓNOMO] Nadie está mirando la terminal: no "
+        f"preguntes nada, toma decisiones tú mismo y ejecuta hasta terminar. Si "
+        f"diagnosticas un problema, ARRÉGLALO y verifica el arreglo. Termina "
+        f"SIEMPRE con un reporte claro: estado encontrado, qué hiciste, y "
+        f"recomendaciones."
+    )
+    result, error = "", ""
+    try:
+        from core.agent import AutomyxAgent
+        from core.tool_registry import register_all_tools
+        agent = AutomyxAgent()
+        try:
+            register_all_tools(agent)
+        except Exception:
+            pass
+        result = agent.run(task) or "(sin respuesta)"
+    except Exception as e:
+        error = f"{type(e).__name__}: {e}"
+
+    finished = datetime.now()
+    dur = (finished - started).total_seconds()
+    report = (
+        f"# Reporte Automyx — tarea programada `{sched['id']}`\n\n"
+        f"- **Tarea:** {sched['task']}\n"
+        f"- **Inicio:** {started.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"- **Duración:** {dur:.0f}s\n"
+        f"- **Estado:** {'❌ ERROR' if error else '✅ completada'}\n\n"
+        f"---\n\n"
+        + (f"## Error\n\n```\n{error}\n```\n" if error else f"## Resultado\n\n{result}\n")
+    )
+    report_path.write_text(report, encoding="utf-8")
+
+    sched["last_run"] = finished.isoformat()
+    _save_schedules(schedules)
+    _append_run({
+        "schedule_id": sched["id"], "task": sched["task"],
+        "started_at": started.isoformat(), "finished_at": finished.isoformat(),
+        "result": (result or error)[:500], "error": error,
+        "report": str(report_path), "headless": True,
+    })
+    print(f"reporte: {report_path}")
+    return 1 if error else 0

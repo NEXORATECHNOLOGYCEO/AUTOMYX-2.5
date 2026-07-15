@@ -115,12 +115,25 @@ class SkillForger:
             for m in tool_pattern.finditer(conv.get("agent_response", "")):
                 tools_used.add(m.group(1))
 
+        # Quality gate: un cluster sin tools es charla ("hola", "sí mejor"...)
+        # — no hay procedimiento que aprender, no se forja nada.
+        if not tools_used:
+            return {"skipped": "cluster sin tools — no se forja skill"}
+
         topic_kws = SkillForger._extract_keywords(" ".join(c.get("user_input", "") for c in related), 4)
         topic = " ".join(topic_kws[:3]) if topic_kws else "tarea"
         name = custom_name or SkillForger._kebab_case(f"auto-{topic}-{datetime.now().strftime('%Y%m%d')}")
 
-        if SkillForger.check_duplicates(name):
-            name = f"{name}-{hashlib.md5(str(datetime.now()).encode()).hexdigest()[:6]}"
+        # Dedup por TEMA (sin la fecha): antes cada día se forjaba una copia
+        # nueva del mismo tema (auto-hola-20260709, auto-hola-20260710...).
+        _base = SkillForger._kebab_case(f"auto-{topic}")
+        try:
+            _existing = [d for d in os.listdir(SkillForger.SKILLS_DIR)
+                         if d == name or d.startswith(_base + "-")]
+        except OSError:
+            _existing = []
+        if _existing:
+            return {"skipped": f"skill de tema '{_base}' ya existe: {_existing[0]}"}
 
         sample_input = related[0].get("user_input", "")[:200]
         sample_response = related[0].get("agent_response", "")[:300]

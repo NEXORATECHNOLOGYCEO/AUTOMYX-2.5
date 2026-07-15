@@ -4,9 +4,15 @@ Automyx 2.5 — Punto de entrada unificado
 """
 from __future__ import annotations
 
+import os
+# CRÍTICO: debe fijarse ANTES de que numpy/scipy carguen libifcoremd.dll (runtime
+# Intel Fortran de Anaconda). Ese runtime instala su propio handler de Ctrl+C que
+# ABORTA el proceso ("forrtl: error (200)") saltándose el handler de Python — era
+# lo que sacaba al usuario de Automyx al presionar Ctrl+C.
+os.environ.setdefault("FOR_DISABLE_CONSOLE_CTRL_HANDLER", "1")
+
 import argparse
 import sys
-import os
 import json
 import shutil
 import subprocess
@@ -864,6 +870,8 @@ Uso rápido
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("onboard",   help="Wizard de configuración (6 pasos, diseño hacker)")
+    cr = sub.add_parser("cron", help="Ejecutar una tarea programada (headless, usado por el Programador de Windows)")
+    cr.add_argument("schedule_id", help="ID de la tarea programada")
     sub.add_parser("version",   help="Ver versión, codename y autor")
     sub.add_parser("doctor",    help="Diagnóstico: sistema, integraciones, módulos")
     sub.add_parser("dashboard", help="Abrir dashboard web en el navegador")
@@ -966,6 +974,7 @@ def main() -> int:
 
     dispatch = {
         "onboard":   cmd_onboard,
+        "cron":      lambda a: sys.exit(__import__("core.scheduler", fromlist=["run_headless"]).run_headless(a.schedule_id)),
         "version":   cmd_version,
         "doctor":    cmd_doctor,
         "chat":      cmd_chat,

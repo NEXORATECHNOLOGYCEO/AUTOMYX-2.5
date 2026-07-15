@@ -109,8 +109,8 @@ class Aumformbring:
         conversation = {
             "id": self._generate_hash(user_input + agent_response),
             "timestamp": datetime.now().isoformat(),
-            "user_input": user_input,
-            "agent_response": agent_response,
+            "user_input": user_input[:500],
+            "agent_response": agent_response[:2000],
             "metadata": metadata or {},
             "tools_used": tools_used,
             "success": success,
@@ -313,17 +313,22 @@ class Aumformbring:
         """Generates a formatted string of relevant past experiences for LLM context injection."""
         parts = []
 
-        # 1. Similar conversations
+        # 1. Similar conversations — SOLO pistas de tools útiles. NUNCA incluir las
+        # respuestas pasadas del agente: el modelo las confundía con la conversación
+        # actual y continuaba tareas viejas en vez de atender la orden nueva.
         similar = self.recall_similar_conversations(user_input, limit=max_convs)
-        if similar:
-            parts.append("[RECORDATORIOS DE CONVERSACIONES SIMILARES]")
-            for i, conv in enumerate(similar, 1):
-                tools = conv.get("tools_used", [])
-                tool_str = f" (herramientas: {', '.join(tools[:3])})" if tools else ""
-                parts.append(
-                    f"{i}. Usuario: \"{conv['user_input'][:100]}...\"\n"
-                    f"   Respuesta: \"{conv['agent_response'][:150]}...\"{tool_str}"
-                )
+        hints = [
+            (conv["user_input"][:90], conv.get("tools_used", [])[:4])
+            for conv in similar if conv.get("tools_used")
+        ]
+        if hints:
+            parts.append(
+                "[EXPERIENCIA PREVIA — tareas PASADAS ya terminadas, solo referencia "
+                "de qué tools funcionaron. NO continúes ni repitas esas tareas: "
+                "atiende únicamente la orden actual del usuario.]"
+            )
+            for i, (q, tools) in enumerate(hints, 1):
+                parts.append(f"{i}. \"{q}\" → tools útiles: {', '.join(tools)}")
 
         # 2. Relevant patterns
         patterns = self._load_json(self.patterns_file)

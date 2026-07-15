@@ -128,33 +128,34 @@ def _make_console() -> Optional[Console]:
 def _banner(console: Console) -> None:
     console.clear()
 
-    # ── Logo AUTOMYX bicolor ────────────────────────────────────────────────
+    # ── Boot probes (identidad hacker, rapidos) ─────────────────────────────
+    import platform as _plat
+    import time as _time
+    _T  = "#00D4AA"
+    _GR = ["#00FFB2", "#00F2C8", "#00E0DC", "#00CCEE", "#00B8FF", "#3D9EFF"]
+    console.print()
+    for _n, _v in [
+        ("sys",    f"{_plat.system().lower()} {_plat.release()}"),
+        ("python", _plat.python_version()),
+        ("engine", f"automyx core v{VERSION}"),
+    ]:
+        _bl = Text()
+        _bl.append("  ▸ ", style=f"bold {_T}")
+        _bl.append(f"{_n:<8}", style=f"dim {DM}")
+        _bl.append(_v, style=W)
+        _bl.append("  ✓", style=f"bold {G}")
+        console.print(_bl)
+        _time.sleep(0.04)
+    console.print()
+
+    # ── Logo AUTOMYX mini (SaaS-clean, 2 líneas, degradado) ─────────────────
     art = Text()
     art.append("\n")
-    art.append("  ▄█████╗  ██╗   ██╗████████╗  ██████╗ ███╗   ███╗██╗   ██╗██╗  ██╗\n", style=f"bold {O}")
-    art.append("  ██╔══██╗ ██║   ██║╚══██╔══╝ ██╔═══██╗████╗ ████║╚██╗ ██╔╝╚██╗██╔╝\n", style=f"bold {O}")
-    art.append("  ███████║ ██║   ██║   ██║    ██║   ██║██╔████╔██║ ╚████╔╝  ╚███╔╝ \n", style=f"bold {B}")
-    art.append("  ██╔══██║ ██║   ██║   ██║    ██║   ██║██║╚██╔╝██║  ╚██╔╝   ██╔██╗ \n", style=f"bold {B}")
-    art.append("  ██║  ██║ ╚██████╔╝   ██║    ╚██████╔╝██║ ╚═╝ ██║   ██║   ██╔╝ ██╗\n", style=f"bold {O}")
-    art.append("  ╚═╝  ╚═╝  ╚═════╝    ╚═╝     ╚═════╝ ╚═╝     ╚═╝   ╚═╝   ╚═╝  ╚═╝\n", style=f"dim {O}")
-    art.append("\n")
+    art.append("  ▄▀█ █░█ ▀█▀ █▀█ █▀▄▀█ █▄█ ▀▄▀", style=f"bold {_GR[0]}")
+    art.append(f"   v{VERSION}\n", style=f"dim {DM}")
+    art.append("  █▀█ █▄█ ░█░ █▄█ █░▀░█ ░█░ █░█", style=f"bold {_GR[4]}")
+    art.append("   🐋 autonomous ai agent · nexora\n", style=f"dim {DM}")
     console.print(art)
-
-    # ── Ballena azul en panel ───────────────────────────────────────────────
-    whale_lines = Text()
-    whale_lines.append("                         .-'\n",                            style=f"bold {B}")
-    whale_lines.append("                    '---( ()  ~  ∿  ∿  ∿\n",              style=f"bold {B}")
-    whale_lines.append("                        '-.\"  ∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿~\n",  style=f"bold {B}")
-    whale_lines.append("                   ~~~∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿∿~~~\n",style=f"dim {B}")
-    whale_lines.append(f"   🐋  autonomous ai agent  ·  v{VERSION}  ·  powered by nvidia · anthropic · openai",
-                       style=f"dim {DM}")
-    console.print(Panel(
-        whale_lines,
-        border_style=B,
-        box=_rbox.HEAVY,
-        padding=(0, 2),
-    ))
-    console.print()
 
 
 def _rule(console: Console, title: str = "", color: str = "") -> None:
@@ -168,10 +169,11 @@ def _rule(console: Console, title: str = "", color: str = "") -> None:
 def print_welcome(console: Console, model: str, integrations_on: List[str]) -> None:
     _banner(console)
 
-    cwd  = Path.cwd()
+    cwd  = str(Path.cwd())
+    if len(cwd) > 44:
+        cwd = "…" + cwd[-43:]
     user = os.environ.get("USERNAME") or os.environ.get("USER") or "user"
 
-    # workspace actual
     ws_name = "default"
     try:
         from core.workspace import get_workspace_manager
@@ -179,82 +181,45 @@ def print_welcome(console: Console, model: str, integrations_on: List[str]) -> N
     except Exception:
         pass
 
-    # ── columna izquierda ────────────────────────────────────────────────
-    left = Text()
-    left.append("\n")
-    left.append(f"  {user}  ", style=f"bold {W}")
-    left.append(f"·  {cwd}\n\n", style=f"dim {DM}")
-
-    left.append("  Modelo activo\n", style=f"dim {DM}")
-    left.append(f"  {model}\n\n", style=f"bold {O}")
-
-    left.append("  Integraciones activas\n", style=f"dim {DM}")
+    _T = "#00D4AA"
+    card = Text()
+    card.append("✻ ", style=f"bold {_T}")
+    card.append(f"Bienvenido, {user}", style=f"bold {W}")
+    card.append("\n\n")
+    card.append("  modelo         ", style=f"dim {DM}")
+    card.append(f"{model}\n", style=f"bold {_T}")
+    card.append("  workspace      ", style=f"dim {DM}")
+    card.append(f"{ws_name}\n", style=W)
+    card.append("  integraciones  ", style=f"dim {DM}")
     if integrations_on:
+        _parts = []
         for name in integrations_on:
             meta = INTEGRATIONS.get(name, {})
-            left.append(f"  {meta.get('icon','·')}  ", style="")
-            left.append(f"{meta.get('label', name)}\n", style=f"bold {G}")
+            _parts.append(f"{meta.get('icon','·')} {meta.get('label', name)}")
+        card.append(" · ".join(_parts) + "\n", style=W)
     else:
-        left.append(f"  ninguna  ", style=f"dim {DM}")
-        left.append("→ /onboard\n", style=f"dim {B}")
+        card.append("ninguna — usa /onboard\n", style=f"dim {DM}")
+    card.append("  directorio     ", style=f"dim {DM}")
+    card.append(cwd, style=W)
 
-    left.append("\n")
-    left.append("  Workspace\n", style=f"dim {DM}")
-    left.append(f"  {ws_name}\n", style=f"bold {B}")
+    console.print(Panel(card, border_style=f"dim {_T}", box=_rbox.ROUNDED,
+                        padding=(1, 3), expand=False))
 
-    # ── columna derecha ───────────────────────────────────────────────────
-    right = Text()
-    right.append("\n")
-    right.append("  Comandos\n", style=f"bold {O}")
-    right.append("\n")
-    for k, v in [
-        ("/help",      "ver todos los comandos"),
-        ("/onboard",   "configurar modelo e integraciones"),
-        ("/model",     "cambiar modelo en caliente"),
-        ("/tokens",    "costo de la sesión"),
-        ("/workspace", "gestionar workspaces"),
-        ("/scan",      "escaneo de seguridad"),
-        ("/audit",     "log de auditoría"),
-        ("Ctrl+C",     "salir"),
-    ]:
-        right.append(f"  {k:<18}", style=f"bold {B}")
-        right.append(f"{v}\n",     style=f"dim {DM}")
-
-    right.append("\n")
-    right.append("  Tips\n", style=f"bold {O}")
-    right.append("\n")
-    for t in [
-        "Habla en lenguaje natural para cualquier tarea",
-        "'busca en notion [texto]'  →  notion_search",
-        "'crea issue en github ...' →  github_create_issue",
-        "/init  →  genera AUTOMYX.md del proyecto actual",
-    ]:
-        right.append(f"  · {t}\n", style=f"dim {DM}")
-
-    # ── Layout 50/50 garantizado ──────────────────────────────────────────
-    try:
-        from rich.layout import Layout
-        layout = Layout()
-        layout.split_row(
-            Layout(Panel(left,  border_style=f"dim {B}", box=_rbox.ROUNDED,
-                         padding=(0, 1)), name="left"),
-            Layout(Panel(right, border_style=f"dim {B}", box=_rbox.ROUNDED,
-                         padding=(0, 1)), name="right"),
-        )
-        layout["left"].ratio  = 1
-        layout["right"].ratio = 1
-        console.print(layout, height=18)
-    except Exception:
-        # fallback: apilado
-        console.print(Panel(left,  border_style=f"dim {B}", box=_rbox.ROUNDED, padding=(0, 1)))
-        console.print(Panel(right, border_style=f"dim {B}", box=_rbox.ROUNDED, padding=(0, 1)))
-
+    tips = Text()
+    tips.append("  /help", style=f"bold {_T}")
+    tips.append(" comandos", style=f"dim {DM}")
+    tips.append("   /model", style=f"bold {_T}")
+    tips.append(" cambiar", style=f"dim {DM}")
+    tips.append("   /tokens", style=f"bold {_T}")
+    tips.append(" costos", style=f"dim {DM}")
+    tips.append("   /onboard", style=f"bold {_T}")
+    tips.append(" configurar", style=f"dim {DM}")
+    tips.append("   !", style=f"bold {_T}")
+    tips.append(" shell", style=f"dim {DM}")
+    console.print(tips)
     console.print()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Selector de modelo (mismo estilo que onboard_pro_v5 paso 2)
-# ─────────────────────────────────────────────────────────────────────────────
 def select_model(console: Console, current: str = "") -> str:
     _banner(console)
     _rule(console, "SELECCIÓN DE MODELO", B)
@@ -493,8 +458,8 @@ def wire_all_integrations(agent: Any, console: Optional[Console] = None) -> Dict
         results[name] = n
         if console and n:
             console.print(
-                f"  [{G}]✓[/{G}]  [{DM}]{INTEGRATIONS[name]['icon']}  "
-                f"{INTEGRATIONS[name]['label']}[/{DM}]  [{DM}]{n} tools[/{DM}]"
+                f"  [dim #3a5a80]⎿ [/][dim #6888A8]{INTEGRATIONS[name]['icon']} "
+                f"{INTEGRATIONS[name]['label'].lower()} · {n} tools[/] [bold {G}]✓[/]"
             )
 
     _add("notion",      _wire_notion)
@@ -613,16 +578,7 @@ class AutomyxCLI:
         def _patched_ensure() -> None:
             original_ensure()
             if repl.agent is not None:
-                if self.console:
-                    self.console.print(
-                        f"\n  [{DM}]── Conectando integraciones ...[/{DM}]"
-                    )
                 results = wire_all_integrations(repl.agent, self.console)
-                total_tools = sum(results.values())
-                if total_tools and self.console:
-                    self.console.print(
-                        f"  [{G}]✓[/{G}] [{DM}]{total_tools} tools de integraciones registradas[/{DM}]\n"
-                    )
             repl._ensure_agent = original_ensure  # solo parchear una vez
 
         repl._ensure_agent = _patched_ensure

@@ -67,29 +67,63 @@ Unlike cloud-only agents, Automyx is a **local-first Gateway** that runs on hard
 
 ## 🏗️ Architecture at a Glance
 
-```mermaid
-graph TB
-    User[👤 User<br/>Web / CLI / WhatsApp / Telegram]
-    Gateway[🚪 Gateway<br/>api/main.py :3500]
-    Core[🧠 Core<br/>core/]
-    Tools[🛠️ Tools<br/>tools/ · 9,467 endpoints]
-    OS[💻 OS<br/>Win / macOS / Linux / Pi]
-    LLM[🤖 LLM<br/>NVIDIA / Ollama / OpenAI]
-    Memory[🧠 AUMFORMBRING<br/>SQLite + Vector RAG]
+Automyx follows a **layered gateway architecture** where every layer is independently replaceable:
 
-    User -->|HTTP / WS| Gateway
-    Gateway --> Core
-    Core <-->|reasoning| LLM
-    Core <-->|memory| Memory
-    Core --> Tools
-    Tools --> OS
-    OS -.feedback.-> Tools
-    Tools -.results.-> Core
-    Core -.response.-> Gateway
-    Gateway -.stream.-> User
+```
+┌─────────────────────────────────────────────────────┐
+│  CLIENTS: Web Dashboard · CLI · WhatsApp · Telegram │
+└──────────────────────┬──────────────────────────────┘
+                       │ HTTP / WebSocket
+┌──────────────────────▼──────────────────────────────┐
+│  GATEWAY (api/main.py) — FastAPI server on :3500   │
+│  • Authentication via X-Gateway-Token               │
+│  • Request routing & validation                     │
+│  • SSE/WS streaming back to clients                 │
+└──────────────────────┬──────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────┐
+│  CORE (core/) — The brain of Automyx               │
+│  • AutomyxAgent: orchestrates the entire pipeline   │
+│  • Intent Engine: understands 30+ colloquial intents│
+│  • Multi-Task Dispatcher: parallel execution (6)    │
+│  • JSON Protocol: bulletproof parsing & streaming   │
+└──────────┬───────────────────────┬──────────────────┘
+           │                       │
+┌──────────▼──────────┐  ┌────────▼───────────────┐
+│  SKILLS (86)        │  │  TOOLS (9,467 names)   │
+│  skills/*/SKILL.md  │  │  tools/*.py + aliases  │
+│  • How-to guides    │  │  • Mouse/keyboard      │
+│  • Step-by-step     │  │  • File operations     │
+│  • Prompt templates │  │  • Browser automation  │
+└─────────────────────┘  └────────┬───────────────┘
+                                  │
+┌─────────────────────────────────▼────────────────┐
+│  OPERATING SYSTEM — Win / macOS / Linux / Pi     │
+│  Real mouse clicks, file system, subprocesses    │
+└──────────────────────────────────────────────────┘
 ```
 
-**Full architecture** (root → leaves) lives in **[ARCHITECTURE.md](ARCHITECTURE.md)** with Mermaid diagrams for the data flow, the multi-task dispatcher, the skills marketplace, and the deployment topology.
+### 🔑 Key Design Principles
+
+| Principle | What it means |
+|---|---|
+| **Local-first** | Everything runs on your machine. No cloud dependency for autonomy. |
+| **Gateway pattern** | The FastAPI server is just a door — the real logic lives in `core/`. |
+| **Intent > Syntax** | You talk naturally; the Intent Engine translates to precise tool calls. |
+| **12,606 aliases** | Every tool has dozens of colloquial names in ES/EN — no memorization needed. |
+| **Streaming response** | Real-time phase visualization (idle → analyzing → thinking → executing → responding). |
+| **Modular skills** | Each skill is a self-contained `SKILL.md` — add new capabilities without touching core code. |
+
+### 🔄 Request Flow in 6 Steps
+
+1. **User sends** a message via Web, CLI, WhatsApp, or Telegram.
+2. **Gateway** validates auth and forwards to `AutomyxAgent`.
+3. **Intent Engine** parses the message → detects intent + entities (confidence scoring).
+4. **LLM** receives the system prompt + intent context → generates a tool call.
+5. **Tool Dispatcher** resolves the canonical tool name, executes it on the OS, captures output.
+6. **Gateway streams** the final response back to the client via WebSocket/SSE.
+
+> 📖 For the complete technical architecture with Mermaid diagrams (project tree, data flow, multi-task dispatcher, memory subsystem, deployment topology), see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ---
 

@@ -99,6 +99,11 @@ class PCTools:
                 or kwargs.get('destination')
             )
 
+            # Si la IA mandó old_string/new_string quería edit_file — redirigir
+            # (evita sobrescribir un archivo con vacío por confundir las tools)
+            if kwargs.get('old_string') is not None or kwargs.get('old') is not None:
+                return PCTools.edit_file(**kwargs)
+
             # Buscar content en todos los alias posibles — incluyendo string vacío ""
             _CONTENT_KEYS = ('content', 'text', 'data', 'body', 'contents')
             content = None
@@ -405,6 +410,27 @@ class PCTools:
             subprocess.Popen(command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return f"✅ Comando iniciado en segundo plano: {command}"
 
+        # ── Guardas de seguridad git ──────────────────────────────────────
+        # Destruir/mover .git aniquila el historial del proyecto — bloqueado.
+        _GIT_KILLERS = [
+            r'\bmove\b[^&|]*\.git\b', r'\brmdir\b[^&|]*\.git\b',
+            r'\brd\b[^&|]*\.git\b', r'\bdel\b[^&|]*\.git\b',
+            r'\brm\s+-rf?\s+[^&|]*\.git\b',
+        ]
+        if any(_re.search(p, cmd_lower) for p in _GIT_KILLERS):
+            return ("❌ BLOQUEADO: ese comando destruye/mueve la carpeta .git y con "
+                    "ella TODO el historial del proyecto. Casi nunca es la solución "
+                    "correcta (para binarios grandes usa la tool git_deploy, que los "
+                    "excluye sola). Si el usuario de verdad quiere borrar el historial, "
+                    "que lo haga él manualmente.")
+        # Force-push reescribe el historial remoto — solo con orden explícita.
+        if _re.search(r'git\s+push\b', cmd_lower) and _re.search(r'(\s--force\b|\s-f\b)', cmd_lower):
+            if not (kwargs.get('force_ok') or kwargs.get('confirmado')):
+                return ("❌ BLOQUEADO: git push --force reescribe el historial remoto y "
+                        "puede destruir trabajo. Para desplegar usa la tool git_deploy "
+                        "(nunca necesita force). Solo si el USUARIO pidió el force "
+                        "EXPLÍCITAMENTE, reintenta añadiendo \"force_ok\": true en args.")
+
         # ── Timeout adaptativo según tipo de comando ──
         _LONG_PATTERNS = [
             'npm install', 'npm i ', 'yarn install', 'yarn add',
@@ -413,21 +439,41 @@ class PCTools:
             'cargo build', 'go build', 'mvn package', 'gradle build',
             'apt-get install', 'apt install', 'brew install',
         ]
+        # Red/builds pesados: push de repos grandes, clones, empaquetados —
+        # 45s los mataba a medias (el push de Ramon murió 4 veces por esto).
+        _VERY_LONG_PATTERNS = [
+            'git push', 'git pull', 'git clone', 'git fetch', 'git lfs',
+            'pyinstaller', 'iscc', 'docker build', 'docker pull', 'docker push',
+        ]
         if custom_timeout:
             timeout = int(custom_timeout)
+        elif any(p in cmd_lower for p in _VERY_LONG_PATTERNS):
+            timeout = 600
         elif any(p in cmd_lower for p in _LONG_PATTERNS):
             timeout = 180
         else:
             timeout = 45
 
+        # ssh interactivo se cuelga pidiendo contraseña — redirigir a ssh_exec
+        if _re.match(r'^\s*ssh\s', cmd_lower) and ' -o batchmode' not in cmd_lower:
+            return ("❌ ssh interactivo bloqueado: pediría la contraseña en un prompt "
+                    "que nadie puede responder y se colgaría. Usa la tool ssh_exec "
+                    "con host, user, password y command.")
+
         try:
+            # stdin cerrado: cualquier comando que pida input interactivo
+            # (contraseñas, confirmaciones y/n) falla rápido en vez de colgarse
             result = subprocess.run(
                 command, shell=True, capture_output=True, text=True,
-                encoding='utf-8', errors='replace', timeout=timeout
+                encoding='utf-8', errors='replace', timeout=timeout,
+                stdin=subprocess.DEVNULL
             )
             out = result.stdout or ""
             err = result.stderr or ""
             combined = (out + err).strip()
+            if result.returncode != 0:
+                return (f"❌ Comando falló (exit code {result.returncode}):\n"
+                        f"{combined or '(sin output)'}")
             if not combined:
                 return f"✅ Comando ejecutado (sin output). Exit code: {result.returncode}"
             return combined
@@ -554,6 +600,261 @@ class PCTools:
             return f"⏱️ Timeout ({timeout}s). Si es un servidor usa background=true."
         except Exception as e:
             return f"Error ejecutando script: {e}"
+
+    @staticmethod
+    def ssh_exec(**kwargs) -> str:
+        """Ejecuta un comando en un servidor REMOTO por SSH de forma NO
+        interactiva (con contraseña o llave). SIEMPRE usa esta tool para
+        servidores — NUNCA `ssh` por execute_cmd (se cuelga pidiendo la
+        contraseña en un prompt que nadie puede responder).
+
+        Args:
+            host: IP o dominio del servidor
+            command: comando a ejecutar (encadena con && o ; si son varios)
+            user: usuario (default root)
+            password: contraseña SSH (o usa key_path)
+            key_path: ruta a llave privada (opcional)
+            port: puerto SSH (default 22)
+            timeout_seconds: timeout del comando (default 60)
+        """
+        host = kwargs.get("host") or kwargs.get("ip") or kwargs.get("server")
+        command = kwargs.get("command") or kwargs.get("cmd")
+        user = kwargs.get("user") or kwargs.get("username") or "root"
+        password = kwargs.get("password") or kwargs.get("pass")
+        key_path = kwargs.get("key_path") or kwargs.get("key")
+        port = int(kwargs.get("port") or 22)
+        timeout = int(kwargs.get("timeout_seconds") or kwargs.get("timeout") or 60)
+        if not host or not command:
+            return "❌ Error: Se requiere 'host' y 'command'."
+        try:
+            import paramiko
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            connect_kw = {"hostname": host, "port": port, "username": user,
+                          "timeout": 20, "allow_agent": False, "look_for_keys": False}
+            if key_path:
+                connect_kw["key_filename"] = key_path
+                connect_kw["look_for_keys"] = True
+            elif password:
+                connect_kw["password"] = password
+            else:
+                connect_kw["look_for_keys"] = True
+            ssh.connect(**connect_kw)
+            _, stdout, stderr = ssh.exec_command(command, timeout=timeout)
+            out = stdout.read().decode("utf-8", errors="replace")
+            err = stderr.read().decode("utf-8", errors="replace")
+            code = stdout.channel.recv_exit_status()
+            ssh.close()
+            res = out.strip()
+            if err.strip() and code != 0:
+                res = (res + "\n[stderr] " + err.strip()).strip()
+            return res[-2500:] or f"✅ comando ejecutado (exit {code}, sin output)"
+        except Exception as e:
+            return f"❌ SSH falló ({host}:{port} como {user}): {str(e)[:200]}"
+
+    @staticmethod
+    def diagnose_website(**kwargs) -> str:
+        """Diagnóstico completo de un sitio/SaaS en producción: DNS, conexión,
+        HTTP status, latencia, certificado SSL (días restantes), redirecciones
+        y contenido. Úsalo SIEMPRE como primer paso al revisar un despliegue.
+
+        Args:
+            url: la URL a diagnosticar (ej. https://miapp.com)
+            keyword: texto que DEBERÍA aparecer en la página (opcional)
+        """
+        url = kwargs.get("url") or kwargs.get("site") or kwargs.get("domain")
+        keyword = kwargs.get("keyword") or ""
+        if not url:
+            return "❌ Error: Se requiere 'url'."
+        if not str(url).startswith(("http://", "https://")):
+            url = "https://" + str(url)
+        import json as _json
+        import socket
+        import ssl
+        import time as _t
+        from urllib.parse import urlparse
+        from datetime import datetime as _dt
+        out = {"url": url, "ok": True, "problemas": []}
+        host = urlparse(url).hostname or ""
+        try:
+            t0 = _t.time()
+            ips = socket.gethostbyname_ex(host)[2]
+            out["dns"] = {"ok": True, "ips": ips[:3], "ms": round((_t.time() - t0) * 1000)}
+        except Exception as e:
+            out["dns"] = {"ok": False, "error": str(e)[:120]}
+            out["ok"] = False
+            out["problemas"].append("DNS no resuelve — dominio caído o mal configurado")
+            return _json.dumps(out, ensure_ascii=False, indent=1)
+        if url.startswith("https://"):
+            try:
+                ctx = ssl.create_default_context()
+                with socket.create_connection((host, 443), timeout=10) as sock:
+                    with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                        cert = ssock.getpeercert()
+                exp = _dt.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z")
+                days = (exp - _dt.utcnow()).days
+                out["ssl"] = {"ok": days > 0, "dias_restantes": days,
+                              "emisor": dict(x[0] for x in cert.get("issuer", ())).get("organizationName", "?")}
+                if days <= 0:
+                    out["ok"] = False
+                    out["problemas"].append("CERTIFICADO SSL VENCIDO — renovar ya (certbot renew)")
+                elif days < 15:
+                    out["problemas"].append(f"SSL vence en {days} días — renovar pronto")
+            except Exception as e:
+                out["ssl"] = {"ok": False, "error": str(e)[:120]}
+                out["ok"] = False
+                out["problemas"].append("Fallo de SSL/handshake")
+        try:
+            import requests as _rq
+            t0 = _t.time()
+            r = _rq.get(url, timeout=25, allow_redirects=True,
+                        headers={"User-Agent": "Automyx-Monitor/1.0"})
+            lat = round((_t.time() - t0) * 1000)
+            out["http"] = {"status": r.status_code, "latencia_ms": lat,
+                           "bytes": len(r.content),
+                           "url_final": r.url if r.url != url else None,
+                           "redirects": len(r.history)}
+            if r.status_code >= 500:
+                out["ok"] = False
+                out["problemas"].append(f"HTTP {r.status_code} — el backend está fallando (revisar logs/servicio)")
+            elif r.status_code in (502, 503, 504):
+                out["ok"] = False
+            elif r.status_code >= 400:
+                out["ok"] = False
+                out["problemas"].append(f"HTTP {r.status_code} en la raíz del sitio")
+            if lat > 5000:
+                out["problemas"].append(f"Latencia alta: {lat}ms (>5s) — servidor sobrecargado o DB lenta")
+            if len(r.content) < 500 and r.status_code == 200:
+                out["problemas"].append("Respuesta 200 pero casi vacía — posible página de error del proxy")
+            if keyword and keyword.lower() not in r.text.lower():
+                out["ok"] = False
+                out["problemas"].append(f"No aparece el texto esperado '{keyword}' — el contenido no es el de la app")
+        except Exception as e:
+            out["http"] = {"ok": False, "error": str(e)[:150]}
+            out["ok"] = False
+            out["problemas"].append("No responde HTTP — servicio caído, puerto cerrado o firewall")
+        if out["ok"] and not out["problemas"]:
+            out["resumen"] = "TODO SANO ✅"
+        return _json.dumps(out, ensure_ascii=False, indent=1)
+
+    @staticmethod
+    def append_file(**kwargs) -> str:
+        """Añade contenido AL FINAL de un archivo existente (para escribir
+        archivos grandes por partes: write_file la parte 1, append_file el resto).
+
+        Args:
+            path/file_path: ruta del archivo
+            content: texto a añadir al final
+        """
+        path = kwargs.get("path") or kwargs.get("file_path") or kwargs.get("file")
+        content = kwargs.get("content") or kwargs.get("text") or ""
+        if not path:
+            return "❌ Error: Se requiere 'path'."
+        try:
+            from pathlib import Path as _P
+            p = _P(str(path))
+            if not p.exists():
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(str(content), encoding="utf-8")
+                return f"✅ {path} no existía — creado con el contenido ({len(str(content))} chars)."
+            with open(p, "a", encoding="utf-8") as fh:
+                fh.write(str(content))
+            total = p.stat().st_size
+            return f"✅ Añadido a {path} (+{len(str(content))} chars, archivo ahora {total} bytes)."
+        except Exception as e:
+            return f"❌ Error añadiendo a {path}: {e}"
+
+    @staticmethod
+    def run_python_code(**kwargs) -> str:
+        """Ejecuta CÓDIGO Python inline (sin crear archivo tú mismo) — el patrón
+        heredoc de Claude Code: escribe el script, lo corre y devuelve el output.
+        Perfecto para arreglar código, parsear/verificar archivos, probar ideas.
+
+        Args:
+            code: el código Python completo a ejecutar
+            cwd: directorio de trabajo (default .)
+            timeout_seconds: default 120
+        """
+        code = kwargs.get("code") or kwargs.get("script") or kwargs.get("python")
+        cwd = kwargs.get("cwd") or kwargs.get("dir") or "."
+        timeout = int(kwargs.get("timeout_seconds") or kwargs.get("timeout") or 120)
+        if not code or not str(code).strip():
+            return "❌ Error: Se requiere 'code' con el código Python."
+        import os as _os
+        import tempfile as _tf
+        tf = _tf.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8")
+        tf.write(str(code))
+        tf.close()
+        try:
+            result = subprocess.run(
+                f'python "{tf.name}"', shell=True, cwd=cwd, capture_output=True,
+                text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                env={**_os.environ, "PYTHONIOENCODING": "utf-8"},
+                stdin=subprocess.DEVNULL,
+            )
+            out = (result.stdout or "").strip()
+            if result.returncode != 0 and (result.stderr or "").strip():
+                out = (out + "\n[stderr] " + result.stderr.strip()).strip()
+            return out[-2000:] or f"✅ Código ejecutado sin output (exit {result.returncode})"
+        except subprocess.TimeoutExpired:
+            return f"⏱️ Timeout ({timeout}s) ejecutando el código."
+        except Exception as e:
+            return f"Error ejecutando código: {e}"
+        finally:
+            try:
+                _os.unlink(tf.name)
+            except Exception:
+                pass
+
+    @staticmethod
+    def edit_file(**kwargs) -> str:
+        """Edición QUIRÚRGICA de un archivo (como el Edit de Claude Code):
+        reemplaza old_string (texto EXACTO y único, con su indentación) por
+        new_string. En archivos .py verifica la sintaxis y REVIERTE si la rompe.
+
+        Args:
+            path: ruta del archivo
+            old_string: fragmento exacto a reemplazar (único en el archivo)
+            new_string: texto nuevo
+            replace_all: true para reemplazar todas las apariciones
+        """
+        path = kwargs.get("path") or kwargs.get("file") or kwargs.get("file_path")
+        old = kwargs.get("old_string") if kwargs.get("old_string") is not None else kwargs.get("old")
+        new = kwargs.get("new_string") if kwargs.get("new_string") is not None else kwargs.get("new", "")
+        replace_all = bool(kwargs.get("replace_all"))
+        if not path or old is None:
+            return "❌ Error: Se requiere 'path' y 'old_string'."
+        from pathlib import Path as _P
+        p = _P(str(path))
+        if not p.exists():
+            return f"❌ No existe el archivo: {path}"
+        try:
+            src = p.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            return f"❌ No se pudo leer {path}: {e}"
+        old, new = str(old), str(new)
+        n = src.count(old)
+        if n == 0:
+            return ("❌ old_string NO aparece exacto en el archivo. Lee el archivo con "
+                    "read_file y copia el fragmento TAL CUAL (misma indentación y saltos).")
+        if n > 1 and not replace_all:
+            return (f"❌ old_string aparece {n} veces — agrégale más líneas de contexto "
+                    f"para que sea único, o pasa replace_all=true.")
+        new_src = src.replace(old, new) if replace_all else src.replace(old, new, 1)
+        try:
+            p.write_text(new_src, encoding="utf-8")
+        except Exception as e:
+            return f"❌ No se pudo escribir {path}: {e}"
+        if str(path).endswith(".py"):
+            try:
+                import ast as _ast
+                _ast.parse(new_src)
+            except SyntaxError as e:
+                p.write_text(src, encoding="utf-8")
+                return (f"❌ La edición rompía la sintaxis Python (línea {e.lineno}: {e.msg}) "
+                        f"— REVERTIDA automáticamente. Corrige new_string y reintenta.")
+        reps = n if replace_all else 1
+        return f"✅ {path} editado ({reps} reemplazo{'s' if reps > 1 else ''}, sintaxis ok)."
 
     @staticmethod
     def open_browser(**kwargs) -> str:
@@ -1110,9 +1411,114 @@ class PCTools:
             return f"❌ Error en automatización de Gemini: {str(e)}"
 
     @staticmethod
-    def wait_seconds(seconds: int) -> str:
+    def find_file(**kwargs) -> str:
+        """Busca archivos, carpetas o aplicaciones por nombre en las ubicaciones
+        típicas del usuario (Escritorio, Documentos, Descargas, Menú Inicio,
+        Program Files). Mucho más fiable que encadenar dir/findstr en cmd.
+
+        Args:
+            query/name/pattern: nombre o parte del nombre (varias palabras = todas deben aparecer)
+            root/path: (opcional) carpeta única donde buscar
+            max_results: máximo de coincidencias (default 40)
+        """
+        import re as _re
+        import time as _t
+        query = str(kwargs.get("query") or kwargs.get("name") or kwargs.get("pattern")
+                    or kwargs.get("filename") or "").strip()
+        root = kwargs.get("root") or kwargs.get("path") or kwargs.get("directory")
+        try:
+            max_results = max(1, min(int(kwargs.get("max_results", 40)), 200))
+        except (TypeError, ValueError):
+            max_results = 40
+        if not query:
+            return "❌ Error: Se requiere 'query' (nombre o parte del nombre a buscar)."
+
+        words = [w.lower() for w in _re.split(r"[\s\*_\-\.]+", query) if len(w) >= 2]
+        if not words:
+            words = [query.lower()]
+
+        home = os.path.expanduser("~")
+        if root:
+            roots = [PCTools._resolve_path(str(root))]
+        else:
+            roots = [
+                os.path.join(home, "Desktop"),
+                os.path.join(home, "Documents"),
+                os.path.join(home, "Downloads"),
+                os.path.join(home, "AppData", "Roaming", "Microsoft", "Windows",
+                             "Start Menu", "Programs"),
+                os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"),
+                             "Microsoft", "Windows", "Start Menu", "Programs"),
+                os.path.join(home, "AppData", "Local", "Programs"),
+                os.environ.get("ProgramFiles", r"C:\Program Files"),
+                os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+                os.path.join(home, "Videos"),
+                os.path.join(home, "Music"),
+                os.path.join(home, "Pictures"),
+            ]
+        roots = [r for r in dict.fromkeys(roots) if r and os.path.isdir(r)]
+
+        _SKIP_DIRS = {"node_modules", ".git", "__pycache__", "venv", ".venv", "env",
+                      "site-packages", "windowsapps", "winsxs", "$recycle.bin",
+                      "system volume information", ".cache", "cache", "temp", "tmp"}
+        deadline = _t.time() + 20  # presupuesto duro de 20s
+        matches = []       # todas las palabras coinciden
+        partial = []       # al menos una palabra coincide (typos: "william" vs "wiliam")
+        _partial_words = [w for w in words if len(w) >= 3]
+        truncated = False
+        for base in roots:
+            if _t.time() > deadline or len(matches) >= max_results:
+                truncated = True
+                break
+            for dirpath, dirnames, filenames in os.walk(base):
+                if _t.time() > deadline or len(matches) >= max_results:
+                    truncated = True
+                    break
+                dirnames[:] = [d for d in dirnames if d.lower() not in _SKIP_DIRS]
+                for name in dirnames + filenames:
+                    low = name.lower()
+                    full = None
+                    if all(w in low for w in words):
+                        full = os.path.join(dirpath, name)
+                        kind = "dir" if name in dirnames else "file"
+                        matches.append(f"- {full}  [{kind}]")
+                        if len(matches) >= max_results:
+                            break
+                    elif (len(words) > 1 and len(partial) < max_results
+                          and any(w in low for w in _partial_words)):
+                        kind = "dir" if name in dirnames else "file"
+                        partial.append(f"- {os.path.join(dirpath, name)}  [{kind}]")
+
+        if matches:
+            header = f"✅ {len(matches)} coincidencia{'s' if len(matches) > 1 else ''} para '{query}'"
+            if truncated:
+                header += " (búsqueda cortada por tiempo/límite — puede haber más)"
+            return header + ":\n" + "\n".join(matches)
+        if partial:
+            from difflib import SequenceMatcher
+            _q = "".join(words)
+            def _score(line):
+                base = os.path.basename(line[2:line.rfind("  [")]).lower()
+                return SequenceMatcher(None, _q, base).ratio()
+            partial.sort(key=_score, reverse=True)
+            return (f"⚠ Sin coincidencia EXACTA para '{query}', pero hay "
+                    f"{len(partial)} coincidencia{'s' if len(partial) > 1 else ''} PARCIAL"
+                    f"{'ES' if len(partial) > 1 else ''} ordenadas por similitud "
+                    f"(posible typo en el nombre — revisa cuál es la buena):\n"
+                    + "\n".join(partial[:25]))
+        return (f"⚠ Sin coincidencias para '{query}' en {len(roots)} ubicaciones "
+                f"({'; '.join(os.path.basename(r) or r for r in roots[:6])}...). "
+                f"Pide al usuario el nombre exacto o la ruta — NO sigas buscando a ciegas.")
+
+    @staticmethod
+    def wait_seconds(seconds=10, **kwargs) -> str:
         """Pausa la ejecución por una cantidad de segundos. Útil para esperar a que los programas abran."""
         import time
+        try:
+            seconds = int(float(kwargs.get("segundos", seconds) or 10))
+        except (TypeError, ValueError):
+            seconds = 10
+        seconds = max(1, min(seconds, 300))
         time.sleep(seconds)
         return f"✅ Esperé {seconds} segundos."
 
@@ -1176,8 +1582,12 @@ class PCTools:
 
     @staticmethod
     def screenshot() -> str:
-        """Toma una captura de pantalla y la guarda."""
+        """Toma una captura de pantalla y la guarda. NOTA: esta tool NO analiza la
+        imagen — para VER el contenido usa see_screen(question=...) que captura Y
+        describe con el modelo de visión en un solo paso."""
         path = "screenshot.png"
         img = ImageGrab.grab()
         img.save(path)
-        return f"Captura guardada en {path}"
+        return (f"Captura guardada en {path}. OJO: no puedo verla directamente — "
+                f"usa see_image('{path}', pregunta) o mejor see_screen(question) "
+                f"que captura y analiza en un solo paso.")

@@ -1,0 +1,218 @@
+/* ==========================================
+   TAXI SENDAN - ESTILOS PRINCIPALES (CSS3)
+   Diseño: Moderno, Limpio, Optimizado para Móvil
+   ========================================== */
+
+:root {
+    --primary-color: #FFC107; /* Amarillo Taxi */
+    --primary-dark: #FFA000;
+    --secondary-color: #212529; /* Negro suave */
+    --accent-color: #007BFF; /* Azul para acciones secundarias */
+    --text-color: #333333;
+    --bg-color: #F8F9FA;
+    --white: #FFFFFF;
+    --shadow-sm: 0 2px 4px rgba(0,0,0,0.1);
+    --shadow-md: 0 4px 6px rgba(0,0,0,0.15);
+    --border-radius: 8px;
+    --font-family: 'Inter', sans-serif;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: var(--font-family);
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* Evita scroll en la app móvil */
+}
+
+/* --- Overlay de Carga --- */
+#loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(255, 255, 255, 0.95);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+    transition: opacity 0.3s ease;
+}
+
+#loading-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.loader-content {
+    text-align: center;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid rgba(0, 0, 0, 0.1);
+    border-left-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 10px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* --- Header --- */
+.app-header {
+    background-color: var(--white);
+    padding: 15px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: var(--shadow-sm);
+    z-index: 1000;
+}
+
+.logo-container h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--secondary-color);
+}
+
+.logo-container .subtitle {
+    font-size: 0.8rem;
+    color: #666;
+    display: block;
+}
+
+#btn-location {
+    background: none;
+    border: 1px solid #ddd;
+    border-radius: var(--border-radius);
+    padding: 8px;
+    cursor: pointer;
+    color: var(--accent-color);
+    transition: all 0.2s ease;
+}
+
+#btn-location:hover {
+    background-color: #f0f0f0;
+}
+
+/* --- Contenedor del Mapa --- */
+.map-container {
+    flex-grow: 1;
+    position: relative;
+    overflow: hidden;
+}
+
+#map {
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+}
+
+.info-panel {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: var(--white);
+    padding: 15px;
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-md);
+    z-index: 1000;
+    text-align: center;
+    width: 80%;
+    max-width: 300px;
+}
+
+.info-panel.hidden {
+    display: none;
+}
+
+/* --- Panel de Control Inferior --- */
+.control-panel {
+    background-color: var(--white);
+    padding: 20px;
+    border-top-left-radius: 16px;
+    border-top-right-radius: 16px;
+    box-shadow: 0 -4px 10px rgba(0,0,0,0.1);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.input-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.input-group label {
+    font-size: 0.8rem;
+    color: #666;
+    margin-bottom: 5px;
+    font-weight: 500;
+}
+
+.input-group input {
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: var(--border-radius);
+    font-size: 1rem;
+    font-family: inherit;
+    transition: border-color 0.2s;
+}
+
+.input-group input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.btn-primary {
+    background-color: var(--primary-color);
+    color: var(--secondary-color);
+    border: none;
+    padding: 15px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.btn-primary:hover {
+    background-color: var(--primary-dark);
+}
+
+/* --- Ajustes para Leaflet Icons Personalizados --- */
+.custom-marker {
+    background-color: var(--primary-color);
+    border: 3px solid white;
+    border-radius: 50%;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+}
+
+/* --- Responsive para Pantallas Grandes (Desktop) --- */
+@media (min-width: 768px) {
+    body {
+        max-width: 480px; /* Simula vista móvil en desktop */
+        margin: 0 auto;
+        border-left: 1px solid #eee;
+        border-right: 1px solid #eee;
+    }
+
+    .control-panel {
+        padding: 30px;
+    }
+}

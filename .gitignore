@@ -81,3 +81,13 @@ nexus_data/
 *.key  
 *.pem  
 secrets/  
+
+# >95MB — excluidos por git_deploy (límite de GitHub)
+build/automyx/Automyx.exe
+build/automyx/Automyx.pkg
+build/automyx/PYZ-00.pyz
+dist/Automyx/_internal/Qt5WebEngineCore_conda.dll
+dist/Automyx/_internal/llvmlite/binding/llvmlite.dll
+dist/Automyx/_internal/torch/lib/torch_cpu.dll
+whatsapp_api/.wwebjs_auth/session/Default/Code Cache/pc/5bb[a`6`2`2e2.ue5-ba-[[u0@;`2.db
+installer_output/Automyx_Agent_Installer_v2.5.exe.exe

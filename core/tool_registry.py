@@ -37,6 +37,67 @@ def register_all_tools(agent: Any) -> int:
     
     # ── PC Tools (core - always available) ─────────────────────────────
     PCTools = _safe_import("tools.pc_tools", "PCTools")
+    _VyrexAPI = _safe_import("tools.vyrex_studio_tools", "VyrexStudioTools")
+    _StyleT = _safe_import("tools.video_style_tools", "VideoStyleTools")
+    _PShell = _safe_import("tools.parallel_shell", "ParallelShell")
+    _RFS = _safe_import("tools.remote_fs", "RemoteFS")
+    if _StyleT:
+        try:
+            agent.register_tool("analyze_video_style", _StyleT.analyze_video_style)
+        except Exception:
+            pass
+    if _PShell:
+        # Orquesta de shell (2026-07-14): paralelo + background jobs, para que
+        # el agente NUNCA se estanque en un solo comando
+        for _n, _f in (
+            ("shell_batch",    _PShell.shell_batch),
+            ("run_background", _PShell.run_background),
+            ("check_jobs",     _PShell.check_jobs),
+            ("job_output",     _PShell.job_output),
+            ("kill_job",       _PShell.kill_job),
+        ):
+            try:
+                agent.register_tool(_n, _f)
+            except Exception:
+                pass
+    _GitT = _safe_import("tools.git_tools", "GitTools")
+    if _GitT:
+        # Despliegue git seguro (2026-07-15): excluye binarios >95MB, repara
+        # historial local con blobs gigantes, push con timeout largo, sin force
+        try:
+            agent.register_tool("git_deploy", _GitT.git_deploy)
+        except Exception:
+            pass
+    if _RFS:
+        # Archivos REMOTOS por SFTP (2026-07-14): write_file/edit_file son
+        # locales — sin esto el agente no puede modificar un servidor real
+        for _n, _f in (
+            ("ssh_read_file",   _RFS.ssh_read_file),
+            ("ssh_write_file",  _RFS.ssh_write_file),
+            ("ssh_append_file", _RFS.ssh_append_file),
+            ("ssh_edit_file",   _RFS.ssh_edit_file),
+            ("ssh_upload",      _RFS.ssh_upload),
+        ):
+            try:
+                agent.register_tool(_n, _f)
+            except Exception:
+                pass
+    if _VyrexAPI:
+        # Vyrex Studio via API directa (2026-07-14): SIN navegador, verificable
+        for _vn, _vf in [
+            ("vyrex_generate_image",     _VyrexAPI.vyrex_generate_image),
+            ("vyrex_generate_video_api", _VyrexAPI.vyrex_generate_video_api),
+            ("vyrex_generate_voice",     _VyrexAPI.vyrex_generate_voice),
+            ("vyrex_create_story_video", _VyrexAPI.vyrex_create_story_video),
+            ("vyrex_text_to_clip",       _VyrexAPI.vyrex_text_to_clip),
+            ("vyrex_animate_image",      _VyrexAPI.vyrex_animate_image),
+            ("vyrex_publish_youtube",    _VyrexAPI.vyrex_publish_youtube),
+            ("vyrex_publish_facebook",   _VyrexAPI.vyrex_publish_facebook),
+        ]:
+            try:
+                agent.register_tool(_vn, _vf)
+            except Exception:
+                pass
     if PCTools:
         for name, method in [
             ("execute_cmd", PCTools.execute_cmd),
@@ -51,6 +112,7 @@ def register_all_tools(agent: Any) -> int:
             ("open_vscode", PCTools.open_vscode),
             ("open_program", PCTools.open_program),
             ("wait_seconds", PCTools.wait_seconds),
+            ("find_file", PCTools.find_file),
             ("press_key", PCTools.press_key),
             ("mouse_click", PCTools.mouse_click),
             ("find_and_click_image", PCTools.find_and_click_image),
@@ -66,6 +128,11 @@ def register_all_tools(agent: Any) -> int:
             ("wait_for_server",     PCTools.wait_for_server),
             ("npm_run",             PCTools.npm_run),
             ("run_python",          PCTools.run_python),
+            ("run_python_code",     PCTools.run_python_code),
+            ("edit_file",           PCTools.edit_file),
+            ("append_file",         PCTools.append_file),
+            ("diagnose_website",    PCTools.diagnose_website),
+            ("ssh_exec",            PCTools.ssh_exec),
             ("open_browser",        PCTools.open_browser),
             ("get_system_info",     PCTools.get_system_info),
             ("find_in_files",       PCTools.find_in_files),
