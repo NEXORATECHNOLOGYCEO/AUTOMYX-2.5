@@ -69,38 +69,130 @@ Unlike cloud-only agents, Automyx is a **local-first Gateway** that runs on hard
 
 Automyx follows a **layered gateway architecture** where every layer is independently replaceable:
 
+### High-Level System Diagram
+
+```mermaid
+graph TD
+    subgraph Clients [Client Layer]
+        Web[Web Dashboard]
+        CLI[CLI / Terminal]
+        TG[Telegram Bot]
+        WA[WhatsApp Bridge]
+    end
+
+    subgraph Gateway [Gateway Layer :3500]
+        Auth[Auth Middleware]
+        Router[Request Router]
+        SSE[SSE/WS Streamer]
+    end
+
+    subgraph Core [Core Brain - AutomyxAgent]
+        Intent[Intent Engine v2.5]
+        LLM[LLM Orchestrator]
+        Multi[Multi-Task Dispatcher]
+        Mem[AUMFORMBRING Memory]
+    end
+
+    subgraph Skills [Skills Marketplace - 86 Skills]
+        S1[DevOps / AI Eng]
+        S2[Video / 3D Studio]
+        S3[Cybersecurity]
+        S4[Finance / Data]
+        S5[... + 80 more]
+    end
+
+    subgraph Tools [Tool Abstraction - 9,467 Aliases]
+        T1[Mouse / Keyboard]
+        T2[File System]
+        T3[Browser RPA]
+        T4[Subprocess]
+        T5[System APIs]
+    end
+
+    Clients --> Gateway
+    Auth --> Router
+    Router --> Core
+    Intent --> LLM
+    LLM --> Multi
+    Multi --> Skills
+    Skills --> Tools
+    Tools --> OS[(Operating System)]
+    SSE -->|Live Updates| Web
 ```
-┌─────────────────────────────────────────────────────┐
-│  CLIENTS: Web Dashboard · CLI · WhatsApp · Telegram │
-└──────────────────────┬──────────────────────────────┘
-                       │ HTTP / WebSocket
-┌──────────────────────▼──────────────────────────────┐
-│  GATEWAY (api/main.py) — FastAPI server on :3500   │
-│  • Authentication via X-Gateway-Token               │
-│  • Request routing & validation                     │
-│  • SSE/WS streaming back to clients                 │
-└──────────────────────┬──────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────┐
-│  CORE (core/) — The brain of Automyx               │
-│  • AutomyxAgent: orchestrates the entire pipeline   │
-│  • Intent Engine: understands 30+ colloquial intents│
-│  • Multi-Task Dispatcher: parallel execution (6)    │
-│  • JSON Protocol: bulletproof parsing & streaming   │
-└──────────┬───────────────────────┬──────────────────┘
-           │                       │
-┌──────────▼──────────┐  ┌────────▼───────────────┐
-│  SKILLS (86)        │  │  TOOLS (9,467 names)   │
-│  skills/*/SKILL.md  │  │  tools/*.py + aliases  │
-│  • How-to guides    │  │  • Mouse/keyboard      │
-│  • Step-by-step     │  │  • File operations     │
-│  • Prompt templates │  │  • Browser automation  │
-└─────────────────────┘  └────────┬───────────────┘
-                                  │
-┌─────────────────────────────────▼────────────────┐
-│  OPERATING SYSTEM — Win / macOS / Linux / Pi     │
-│  Real mouse clicks, file system, subprocesses    │
-└──────────────────────────────────────────────────┘
+
+### Intent Engine: Natural Language → Tool Call
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant E as Intent Engine
+    participant C as LLM Context
+    participant D as Dispatcher
+    participant T as Tool / OS
+
+    U->>E: "Metele a youtube bad bunny"
+    E->>E: Tokenize & Classify (30+ intents)
+    E->>E: Extract Entities (query, platform)
+    E-->>C: Intent: play_video | Entity: {q:"bad bunny"}
+    C-->>D: Canonical tool: play_youtube_video
+    D->>T: Execute via PyAutoGUI / yt-dlp
+    T-->>U: Video playing on screen
+```
+
+### Skills & Tools Resolution Matrix
+
+```mermaid
+graph LR
+    subgraph Skill [SKILL.md Guide]
+        S["Skill: Marketing Guru"]
+    end
+
+    subgraph Alias [12,600+ Colloquial Aliases]
+        A1["haz el copy"]
+        A2["escribe el post"]
+        A3["crea la campaña"]
+    end
+
+    S --> A1
+    S --> A2
+    S --> A3
+
+    A1 & A2 & A3 --> R[Canonical Resolver]
+    R --> T1[open_browser]
+    R --> T2[create_email_draft]
+    R --> T3[web_search]
+```
+
+### Multi-Task Parallel Dispatcher
+
+```mermaid
+graph TD
+    subgraph Queue [Task Queue]
+        Q1[Task A: Edit Video]
+        Q2[Task B: Generate PDF]
+        Q3[Task C: Scan Network]
+        Q4[Task D: Write Email]
+    end
+
+    Scheduler[Scheduler]
+
+    subgraph Workers [6 Parallel Workers]
+        W1[Worker 1 - FFmpeg]
+        W2[Worker 2 - ReportLab]
+        W3[Worker 3 - Nmap]
+        W4[Worker 4 - SMTP]
+    end
+
+    Q1 & Q2 & Q3 & Q4 --> Scheduler
+    Scheduler -->|Dispatch| W1
+    Scheduler -->|Dispatch| W2
+    Scheduler -->|Dispatch| W3
+    Scheduler -->|Dispatch| W4
+
+    W1 --> Result[Results Collector]
+    W2 --> Result
+    W3 --> Result
+    W4 --> Result
 ```
 
 ### 🔑 Key Design Principles
